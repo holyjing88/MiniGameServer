@@ -15,6 +15,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 MYSQL_ENV_FILE="${REPO_ROOT}/deployments/db/mysql.env"
+TIKTOK_ENV_FILE="${REPO_ROOT}/deployments/db/tiktok.env"
 SERVICE_UNIT_SRC="${SCRIPT_DIR}/minigamesvr.service"
 APP_SCRIPTS_DIR="${SCRIPT_DIR}/app-scripts"
 
@@ -73,12 +74,83 @@ load_mysql_env() {
   else
     log "warn: ${MYSQL_ENV_FILE} not found; using built-in defaults"
   fi
+  if [[ -f "${TIKTOK_ENV_FILE}" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "${TIKTOK_ENV_FILE}"
+    set +a
+    log "loaded ${TIKTOK_ENV_FILE}"
+  fi
   MYSQL_HOST="${MYSQL_HOST:-127.0.0.1}"
   MYSQL_PORT="${MYSQL_PORT:-3306}"
   MYSQL_ROOT_USER="${MYSQL_ROOT_USER:-root}"
   MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-jgyjgyjgy}"
   MYSQL_DATABASE="${MYSQL_DATABASE:-minigameserver}"
   RANK_MYSQL_DSN="${RANK_MYSQL_DSN:-${MYSQL_ROOT_USER}:${MYSQL_ROOT_PASSWORD}@tcp(${MYSQL_HOST}:${MYSQL_PORT})/${MYSQL_DATABASE}?parseTime=true&loc=UTC&charset=utf8mb4}"
+  RANK_AUTH_MODE="${RANK_AUTH_MODE:-tiktok}"
+  RANK_TT_APP_ID="${RANK_TT_APP_ID:-7657847833046812688}"
+  RANK_TT_CLIENT_KEY="${RANK_TT_CLIENT_KEY:-mg79au52hgl5ggpi}"
+  RANK_TT_CLIENT_SECRET="${RANK_TT_CLIENT_SECRET:-QZAxJCXzGhbK2RWwt3IpXBHN90yNoKto}"
+  RANK_DEFAULT_APP_ID="${RANK_DEFAULT_APP_ID:-parking_smart_brain}"
+}
+
+upsert_env_key() {
+  local file="$1" key="$2" val="$3"
+  if grep -qE "^${key}=" "${file}"; then
+    if sed --version >/dev/null 2>&1; then
+      sed -i "s|^${key}=.*|${key}=${val}|" "${file}"
+    else
+      sed -i '' "s|^${key}=.*|${key}=${val}|" "${file}"
+    fi
+  else
+    printf '%s=%s\n' "${key}" "${val}" >>"${file}"
+  fi
+}
+
+write_env_file() {
+  local dest="${INSTALL_DIR}/${ENV_NAME}"
+  local source_env=""
+
+  if [[ -f "${dest}" ]]; then
+    source_env="${dest}"
+  elif [[ -f "${BACKUP_ROOT}/.minigamesvr_last_backup" ]]; then
+    local last_bak
+    last_bak="$(cat "${BACKUP_ROOT}/.minigamesvr_last_backup")"
+    if [[ -f "${last_bak}/${ENV_NAME}" ]]; then
+      source_env="${last_bak}/${ENV_NAME}"
+    fi
+  fi
+
+  if [[ -n "${source_env}" ]]; then
+    if [[ "${source_env}" != "${dest}" ]]; then
+      cp -a "${source_env}" "${dest}"
+    fi
+  else
+    cat >"${dest}" <<EOF
+RANK_HTTP_ADDR=:8080
+RANK_GRPC_ADDR=:9090
+RANK_STORE=mysql
+RANK_MYSQL_DSN=${RANK_MYSQL_DSN}
+RANK_SESSION_SECRET=change-me-session-secret
+RANK_SERVICE_TOKEN=change-me-service-token
+RANK_SESSION_TTL_SEC=86400
+RANK_TOPN_DEFAULT=100
+RANK_TOPN_MAX=100
+RANK_REFRESH_SEC=30
+RANK_TZ=UTC
+EOF
+    log "wrote new env: ${dest}"
+  fi
+
+  upsert_env_key "${dest}" "RANK_STORE" "mysql"
+  upsert_env_key "${dest}" "RANK_MYSQL_DSN" "${RANK_MYSQL_DSN}"
+  upsert_env_key "${dest}" "RANK_AUTH_MODE" "${RANK_AUTH_MODE}"
+  upsert_env_key "${dest}" "RANK_TT_APP_ID" "${RANK_TT_APP_ID}"
+  upsert_env_key "${dest}" "RANK_TT_CLIENT_KEY" "${RANK_TT_CLIENT_KEY}"
+  upsert_env_key "${dest}" "RANK_TT_CLIENT_SECRET" "${RANK_TT_CLIENT_SECRET}"
+  upsert_env_key "${dest}" "RANK_DEFAULT_APP_ID" "${RANK_DEFAULT_APP_ID}"
+  log "synced TikTok + MySQL credentials into ${dest}"
+  chmod 600 "${dest}"
 }
 
 dir_has_content() {
@@ -100,63 +172,6 @@ backup_if_needed() {
   cp -a "${INSTALL_DIR}" "${bak}"
   echo "${bak}" >"${BACKUP_ROOT}/.minigamesvr_last_backup"
   log "backup done"
-}
-
-write_env_file() {
-  local dest="${INSTALL_DIR}/${ENV_NAME}"
-  local source_env=""
-
-  if [[ -f "${dest}" ]]; then
-    source_env="${dest}"
-  elif [[ -f "${BACKUP_ROOT}/.minigamesvr_last_backup" ]]; then
-    local last_bak
-    last_bak="$(cat "${BACKUP_ROOT}/.minigamesvr_last_backup")"
-    if [[ -f "${last_bak}/${ENV_NAME}" ]]; then
-      source_env="${last_bak}/${ENV_NAME}"
-    fi
-  fi
-
-  if [[ -n "${source_env}" ]]; then
-    if [[ "${source_env}" != "${dest}" ]]; then
-      cp -a "${source_env}" "${dest}"
-    fi
-    if grep -qE '^RANK_MYSQL_DSN=' "${dest}"; then
-      if sed --version >/dev/null 2>&1; then
-        sed -i "s|^RANK_MYSQL_DSN=.*|RANK_MYSQL_DSN=${RANK_MYSQL_DSN}|" "${dest}"
-      else
-        sed -i '' "s|^RANK_MYSQL_DSN=.*|RANK_MYSQL_DSN=${RANK_MYSQL_DSN}|" "${dest}"
-      fi
-    else
-      printf 'RANK_MYSQL_DSN=%s\n' "${RANK_MYSQL_DSN}" >>"${dest}"
-    fi
-    if grep -qE '^RANK_STORE=' "${dest}"; then
-      if sed --version >/dev/null 2>&1; then
-        sed -i "s|^RANK_STORE=.*|RANK_STORE=mysql|" "${dest}"
-      else
-        sed -i '' "s|^RANK_STORE=.*|RANK_STORE=mysql|" "${dest}"
-      fi
-    else
-      printf 'RANK_STORE=mysql\n' >>"${dest}"
-    fi
-    log "kept env (DSN refreshed): ${dest}"
-  else
-    cat >"${dest}" <<EOF
-RANK_HTTP_ADDR=:8080
-RANK_GRPC_ADDR=:9090
-RANK_STORE=mysql
-RANK_MYSQL_DSN=${RANK_MYSQL_DSN}
-RANK_SESSION_SECRET=change-me-session-secret
-RANK_SERVICE_TOKEN=change-me-service-token
-RANK_SESSION_TTL_SEC=86400
-RANK_TOPN_DEFAULT=100
-RANK_TOPN_MAX=100
-RANK_REFRESH_SEC=30
-RANK_TZ=UTC
-RANK_AUTH_MODE=mock
-EOF
-    log "wrote new env: ${dest}"
-  fi
-  chmod 600 "${dest}"
 }
 
 install_ctl_scripts() {

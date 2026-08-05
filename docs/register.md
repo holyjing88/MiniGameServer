@@ -105,7 +105,96 @@ Session 内 `player_id` = `account_id`；榜单写入也使用该 ID。
 }
 ```
 
-登录成功响应含 `username`、`click_id`；客户端右上角展示 `openid` + `用户名`。
+登录成功响应含 `username` / `nickname`、`avatar_url` / `avatar`、`click_id`；客户端右上角展示昵称与头像。
+
+### `app_id` 要不要传？
+
+| 接口 | 要不要 body/query 传 `app_id` |
+|------|-------------------------------|
+| `POST /v1/auth/login` / `register` | **要**（游戏业务 app_id，如 `parking_smart_brain`） |
+| `GET/POST /v1/player/profile` | **不要**（从 Session 取） |
+| `POST /v1/player/profile/sync` | **不要**（从 Session 取） |
+
+注意：TikTok 平台 **App ID**（`7657847833046812688`）≠ HTTP 里的游戏 `app_id`。  
+平台 App ID / Client Key / Secret 只配在**服务器环境变量**，**不要**给客户端。
+
+### `POST /api/v1/tiktok/profile`（别名：`/api/v1/auth/tt_profile`；兼容旧路径 `/v1/...`）
+
+**不需要** Session。把 TikTok `authorize` / `login` 返回的一次性 `code` 换票并拉昵称头像。  
+供尚未接入 MiniGameServer 登录、只做主界面头像的游戏使用（如 VampireDormitory）。
+
+所有 HTTP 接口规范前缀为 **`/api`**（例如登录为 `/api/v1/auth/login`）。
+
+```json
+{
+  "auth_code": "<TTMinis.game.authorize / login 返回的 code>",
+  "channel_id": "tiktok_minis"
+}
+```
+
+字段别名：`auth_code`（推荐）/ `tt_code` / `code`。  
+Cocos 老 `HttpUnit.request_csryw` 会覆盖 body.`code`，客户端应传 **`auth_code`**。
+
+成功：
+
+```json
+{
+  "open_id": "...",
+  "nickname": "...",
+  "username": "...",
+  "avatar_url": "https://...",
+  "avatar": "https://...",
+  "channel_id": "tiktok_minis",
+  "source": "oauth"
+}
+```
+
+失败：`{"code":"TT_PROFILE_FAIL","msg":"..."}`  
+
+前置：服务器 `RANK_AUTH_MODE=tiktok` 且配置 `RANK_TT_CLIENT_KEY` / `RANK_TT_CLIENT_SECRET`。  
+`code` 一次性、约 5 分钟过期，授权后应立即请求。
+
+### `GET /v1/player/profile`
+
+需要 Session（`Authorization: Bearer <session_token>`）。返回当前账号缓存的昵称与头像。
+
+```json
+{
+  "open_id": "oid",
+  "account_id": "tiktok_minis_oid",
+  "username": "玩家昵称",
+  "nickname": "玩家昵称",
+  "avatar_url": "https://...",
+  "avatar": "https://...",
+  "source": "cache"
+}
+```
+
+头像为空时客户端可点头像重试 → 调 `POST /v1/player/profile/sync`。
+
+### `POST /v1/player/profile/sync`
+
+需要 Session。服务端向渠道（TikTok Open API / mock）拉取 nickname + avatar 并落库。
+
+```json
+{
+  "access_token": "<可选，TikTok access_token>",
+  "code": "<可选，服务端换票后再拉资料>"
+}
+```
+
+mock 模式无需 token，会写入 `TT_<open_id>` 与占位头像 URL。
+
+### `POST /v1/player/profile`
+
+需要 Session。客户端把 TTMinisSDK 拿到的昵称/头像推给服务器：
+
+```json
+{
+  "nickname": "玩家昵称",
+  "avatar_url": "https://..."
+}
+```
 
 ### 账号表 `player_register`
 
@@ -114,9 +203,9 @@ Session 内 `player_id` = `account_id`；榜单写入也使用该 ID。
 | 字段 | 说明 |
 |------|------|
 | app_id / channel / open_id / player_id | 账号维度（`player_id` = `{channel}_{open_id}`） |
-| username / click_id | 昵称与推广归因 |
+| username / avatar_url / click_id | 昵称、头像与推广归因 |
 | registered_at_ms | 注册时间 |
-| extra_json | 扩展字段（同步含 username/click_id） |
+| extra_json | 扩展字段（同步含 username/nickname/avatar） |
 
 统计可按 `channel`、`click_id`、`registered_at_ms` 查该表。
 

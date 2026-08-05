@@ -640,3 +640,97 @@ func TestGRPC_PlayerRegisterAndStats(t *testing.T) {
 		t.Fatalf("%v %+v", err, st)
 	}
 }
+
+func TestHTTP_PlayerProfileNicknameAvatar(t *testing.T) {
+	svc := newTestService(t)
+	ts := httptest.NewServer(httpapi.New(svc).Handler())
+	defer ts.Close()
+
+	token, accountID := registerAndLogin(t, ts.URL, "tiktok_minis", "mock:avatarUser")
+
+	// Initially empty profile fields after bare register
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/player/profile", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("get profile %d %s", res.StatusCode, raw)
+	}
+	var cached struct {
+		AccountID string `json:"account_id"`
+		Nickname  string `json:"nickname"`
+		AvatarURL string `json:"avatar_url"`
+		Source    string `json:"source"`
+	}
+	_ = json.Unmarshal(raw, &cached)
+	if cached.AccountID != accountID || cached.Source != "cache" {
+		t.Fatalf("cached=%+v", cached)
+	}
+
+	// Client push nickname/avatar (TTMinisSDK path)
+	updBody, _ := json.Marshal(map[string]string{
+		"nickname": "TikTokNick", "avatar_url": "https://cdn.example/a.png",
+	})
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/v1/player/profile", bytes.NewReader(updBody))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	res, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	var updated struct {
+		Nickname  string `json:"nickname"`
+		Avatar    string `json:"avatar"`
+		AvatarURL string `json:"avatar_url"`
+		Source    string `json:"source"`
+	}
+	_ = json.Unmarshal(raw, &updated)
+	if res.StatusCode != 200 || updated.Nickname != "TikTokNick" || updated.AvatarURL != "https://cdn.example/a.png" || updated.Source != "update" {
+		t.Fatalf("update %d %s", res.StatusCode, raw)
+	}
+
+	// Server sync overwrites from mock provider
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/v1/player/profile/sync", bytes.NewReader([]byte(`{}`)))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	res, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	var synced struct {
+		Nickname  string `json:"nickname"`
+		AvatarURL string `json:"avatar_url"`
+		Source    string `json:"source"`
+	}
+	_ = json.Unmarshal(raw, &synced)
+	if res.StatusCode != 200 || synced.Source != "sync" || synced.Nickname != "TT_avatarUser" || synced.AvatarURL == "" {
+		t.Fatalf("sync %d %s", res.StatusCode, raw)
+	}
+
+	// Login returns nickname/avatar
+	loginBody, _ := json.Marshal(map[string]string{
+		"app_id": "parking_smart_brain", "channel_id": "tiktok_minis", "code": "mock:avatarUser",
+	})
+	res, err = http.Post(ts.URL+"/v1/auth/login", "application/json", bytes.NewReader(loginBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	var login struct {
+		Nickname  string `json:"nickname"`
+		AvatarURL string `json:"avatar_url"`
+	}
+	_ = json.Unmarshal(raw, &login)
+	if res.StatusCode != 200 || login.Nickname != "TT_avatarUser" || login.AvatarURL == "" {
+		t.Fatalf("login profile %d %s", res.StatusCode, raw)
+	}
+}

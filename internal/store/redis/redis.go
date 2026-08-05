@@ -30,6 +30,9 @@ func (s *Store) ReportRegister(context.Context, domain.PlayerRegister) (bool, do
 func (s *Store) GetAccount(context.Context, string, string, string) (domain.PlayerRegister, bool, error) {
 	return domain.PlayerRegister{}, false, ErrNotImplemented
 }
+func (s *Store) UpdateProfile(context.Context, string, string, string, string, string) (domain.PlayerRegister, error) {
+	return domain.PlayerRegister{}, ErrNotImplemented
+}
 func (s *Store) CountByChannel(context.Context, string) (int64, []domain.ChannelCount, error) {
 	return 0, nil, ErrNotImplemented
 }

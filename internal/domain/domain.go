@@ -89,6 +89,7 @@ type PlayerRegister struct {
 	OpenID         string
 	PlayerID       string // account_id = channel_openid
 	Username       string
+	AvatarURL      string // TikTok avatar / display avatar URL
 	ClickID        string // promo attribution (ttclid / clickid), first-touch
 	PlatformKind   int32
 	RegisteredAtMs int64

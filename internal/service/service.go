@@ -22,18 +22,24 @@ type Service struct {
 	cache    *hotcache.Cache
 	sessions *auth.SessionManager
 	resolver auth.OpenIDResolver
+	profiles auth.ProfileProvider
 	svcAuth  auth.StaticServiceAuth
 	loc      *time.Location
 	now      func() time.Time
 }
 
 func New(cfg config.Config, st store.Store, cache *hotcache.Cache, sessions *auth.SessionManager, resolver auth.OpenIDResolver) *Service {
+	var profiles auth.ProfileProvider = auth.MockProfileProvider{}
+	if cfg.AuthMode == "tiktok" && cfg.TikTokClientKey != "" && cfg.TikTokClientSecret != "" {
+		profiles = auth.NewTikTokProfileProvider(cfg.TikTokClientKey, cfg.TikTokClientSecret)
+	}
 	return &Service{
 		cfg:      cfg,
 		store:    st,
 		cache:    cache,
 		sessions: sessions,
 		resolver: resolver,
+		profiles: profiles,
 		svcAuth:  auth.StaticServiceAuth{Token: cfg.ServiceToken},
 		loc:      domain.LoadLocation(cfg.Timezone),
 		now:      time.Now,
@@ -41,6 +47,12 @@ func New(cfg config.Config, st store.Store, cache *hotcache.Cache, sessions *aut
 }
 
 func (s *Service) SetNow(fn func() time.Time) { s.now = fn }
+
+func (s *Service) SetProfileProvider(p auth.ProfileProvider) {
+	if p != nil {
+		s.profiles = p
+	}
+}
 
 type CreateSessionInput struct {
 	AppID   string
@@ -55,6 +67,9 @@ type CreateSessionOutput struct {
 	AccountID    string `json:"account_id"`
 	OpenID       string `json:"open_id"`
 	Username     string `json:"username"`
+	Nickname     string `json:"nickname"`
+	AvatarURL    string `json:"avatar_url"`
+	Avatar       string `json:"avatar"`
 	ClickID      string `json:"click_id"`
 	Channel      string `json:"channel"`
 	ChannelID    string `json:"channel_id"`
@@ -99,10 +114,13 @@ func (s *Service) Login(ctx context.Context, in CreateSessionInput) (*CreateSess
 	if err != nil {
 		return nil, err
 	}
+	nick := usernameOrExtra(reg)
+	avatar := avatarOrExtra(reg)
 	return &CreateSessionOutput{
 		SessionToken: tok, ExpiresIn: exp,
 		PlayerID: accountID, AccountID: accountID, OpenID: openID,
-		Username: usernameOrExtra(reg), ClickID: clickIDOrExtra(reg),
+		Username: nick, Nickname: nick, AvatarURL: avatar, Avatar: avatar,
+		ClickID: clickIDOrExtra(reg),
 		Channel: ch, ChannelID: ch,
 	}, nil
 }
@@ -111,7 +129,20 @@ func usernameOrExtra(reg domain.PlayerRegister) string {
 	if strings.TrimSpace(reg.Username) != "" {
 		return reg.Username
 	}
-	return stringFromExtra(reg.ExtraJSON, "username")
+	if v := stringFromExtra(reg.ExtraJSON, "username"); v != "" {
+		return v
+	}
+	return stringFromExtra(reg.ExtraJSON, "nickname")
+}
+
+func avatarOrExtra(reg domain.PlayerRegister) string {
+	if strings.TrimSpace(reg.AvatarURL) != "" {
+		return reg.AvatarURL
+	}
+	if v := stringFromExtra(reg.ExtraJSON, "avatar_url"); v != "" {
+		return v
+	}
+	return stringFromExtra(reg.ExtraJSON, "avatar")
 }
 
 func clickIDOrExtra(reg domain.PlayerRegister) string {
@@ -611,6 +642,7 @@ type RegisterInput struct {
 	OpenID       string
 	PlayerID     string
 	Username     string
+	AvatarURL    string
 	ClickID      string // promo click id (ttclid / clickid), first-touch only
 	PlatformKind int32
 	ExtraJSON    string
@@ -622,6 +654,9 @@ type RegisterOutput struct {
 	ChannelID      string `json:"channel_id"`
 	OpenID         string `json:"open_id"`
 	Username       string `json:"username"`
+	Nickname       string `json:"nickname"`
+	AvatarURL      string `json:"avatar_url"`
+	Avatar         string `json:"avatar"`
 	ClickID        string `json:"click_id"`
 	AccountID      string `json:"account_id"`
 	PlayerID       string `json:"player_id"`
@@ -654,6 +689,10 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (*RegisterOutp
 	if utf8RuneCount(username) > 32 {
 		return nil, fmt.Errorf("username too long (max 32)")
 	}
+	avatarURL := strings.TrimSpace(in.AvatarURL)
+	if utf8RuneCount(avatarURL) > 512 {
+		return nil, fmt.Errorf("avatar_url too long (max 512)")
+	}
 	clickID := strings.TrimSpace(in.ClickID)
 	if utf8RuneCount(clickID) > 256 {
 		return nil, fmt.Errorf("click_id too long (max 256)")
@@ -662,13 +701,14 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (*RegisterOutp
 		in.PlatformKind = 1
 	}
 	accountID := domain.AccountID(ch, openID)
-	extra := mergeAttrExtra(in.ExtraJSON, username, clickID)
+	extra := mergeAttrExtra(in.ExtraJSON, username, clickID, avatarURL)
 	reg := domain.PlayerRegister{
 		AppID:          in.AppID,
 		Channel:        ch,
 		OpenID:         openID,
 		PlayerID:       accountID,
 		Username:       username,
+		AvatarURL:      avatarURL,
 		ClickID:        clickID,
 		PlatformKind:   in.PlatformKind,
 		RegisteredAtMs: s.now().UnixMilli(),
@@ -682,12 +722,23 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (*RegisterOutp
 	if aid == "" {
 		aid = domain.AccountID(attributed.Channel, openID)
 	}
+	nick := usernameOrExtra(attributed)
+	if nick == "" {
+		nick = username
+	}
+	av := avatarOrExtra(attributed)
+	if av == "" {
+		av = avatarURL
+	}
 	return &RegisterOutput{
 		IsNew:          isNew,
 		Channel:        attributed.Channel,
 		ChannelID:      attributed.Channel,
 		OpenID:         openID,
-		Username:       usernameOrExtra(attributed),
+		Username:       nick,
+		Nickname:       nick,
+		AvatarURL:      av,
+		Avatar:         av,
 		ClickID:        clickIDOrExtra(attributed),
 		AccountID:      aid,
 		PlayerID:       aid,
@@ -700,17 +751,22 @@ func utf8RuneCount(s string) int {
 	return len([]rune(s))
 }
 
-func mergeAttrExtra(extra, username, clickID string) string {
+func mergeAttrExtra(extra, username, clickID, avatarURL string) string {
 	m := map[string]interface{}{}
 	if strings.TrimSpace(extra) != "" {
 		_ = json.Unmarshal([]byte(extra), &m)
 	}
 	if username != "" {
 		m["username"] = username
+		m["nickname"] = username
 	}
 	if clickID != "" {
 		m["click_id"] = clickID
 		m["clickid"] = clickID
+	}
+	if avatarURL != "" {
+		m["avatar_url"] = avatarURL
+		m["avatar"] = avatarURL
 	}
 	b, err := json.Marshal(m)
 	if err != nil {
@@ -768,4 +824,210 @@ func (s *Service) GetRegisterStats(ctx context.Context, appID string) (*Register
 		rows = []domain.ChannelCount{}
 	}
 	return &RegisterStatsOutput{Total: total, ByChannel: rows}, nil
+}
+
+// PlayerProfile is returned to TikTok / Cocos clients for nickname + avatar display.
+type PlayerProfile struct {
+	AppID     string `json:"app_id"`
+	Channel   string `json:"channel"`
+	ChannelID string `json:"channel_id"`
+	OpenID    string `json:"open_id"`
+	AccountID string `json:"account_id"`
+	PlayerID  string `json:"player_id"`
+	Username  string `json:"username"`
+	Nickname  string `json:"nickname"`
+	AvatarURL string `json:"avatar_url"`
+	Avatar    string `json:"avatar"`
+	Source    string `json:"source,omitempty"` // cache | sync | update
+}
+
+type SyncProfileInput struct {
+	AppID       string
+	Channel     string
+	OpenID      string
+	AccessToken string // TikTok access_token from client / OAuth
+	Code        string // optional: server exchanges code then fetches profile
+}
+
+type UpdateProfileInput struct {
+	AppID     string
+	Channel   string
+	OpenID    string
+	Username  string
+	Nickname  string
+	AvatarURL string
+	Avatar    string
+}
+
+func (s *Service) GetPlayerProfile(ctx context.Context, appID, channel, openID string) (*PlayerProfile, error) {
+	ch, err := domain.NormalizeChannel(channel)
+	if err != nil {
+		return nil, err
+	}
+	if appID == "" || openID == "" {
+		return nil, fmt.Errorf("app_id and open_id required")
+	}
+	reg, ok, err := s.store.GetAccount(ctx, appID, ch, openID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("account not found")
+	}
+	return profileFromReg(reg, "cache"), nil
+}
+
+// FetchProfileByAuthCode exchanges a TikTok authorize/login code for nickname + avatar.
+// No session or registered account required — used by games that only need profile display
+// (e.g. VampireDormitory main-menu avatar) before full MiniGameServer login.
+func (s *Service) FetchProfileByAuthCode(ctx context.Context, code, channel string) (*PlayerProfile, error) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return nil, fmt.Errorf("auth_code required")
+	}
+	ch := strings.TrimSpace(channel)
+	if ch == "" {
+		ch = domain.ChannelTikTokMinis
+	}
+	ch, err := domain.NormalizeChannel(ch)
+	if err != nil {
+		return nil, err
+	}
+	if s.profiles == nil {
+		return nil, fmt.Errorf("profile provider not configured")
+	}
+	appID := strings.TrimSpace(s.cfg.DefaultAppID)
+	_, oid, prof, exErr := s.profiles.ExchangeCode(ctx, appID, ch, code)
+	if exErr != nil && prof == nil {
+		return nil, fmt.Errorf("profile exchange: %w", exErr)
+	}
+	if prof == nil {
+		return nil, fmt.Errorf("empty profile from provider")
+	}
+	nick := strings.TrimSpace(prof.Nickname)
+	avatar := strings.TrimSpace(prof.AvatarURL)
+	if nick == "" && avatar == "" {
+		return nil, fmt.Errorf("empty nickname/avatar from provider")
+	}
+	if oid == "" {
+		oid = strings.TrimSpace(prof.OpenID)
+	}
+	accountID := ""
+	if oid != "" {
+		accountID = domain.AccountID(ch, oid)
+	}
+	return &PlayerProfile{
+		AppID:     appID,
+		Channel:   ch,
+		ChannelID: ch,
+		OpenID:    oid,
+		AccountID: accountID,
+		PlayerID:  accountID,
+		Username:  nick,
+		Nickname:  nick,
+		AvatarURL: avatar,
+		Avatar:    avatar,
+		Source:    "oauth",
+	}, nil
+}
+
+// SyncPlayerProfile fetches nickname/avatar from channel platform (TikTok or mock) and persists.
+func (s *Service) SyncPlayerProfile(ctx context.Context, in SyncProfileInput) (*PlayerProfile, error) {
+	ch, err := domain.NormalizeChannel(in.Channel)
+	if err != nil {
+		return nil, err
+	}
+	if in.AppID == "" || in.OpenID == "" {
+		return nil, fmt.Errorf("app_id and open_id required")
+	}
+	if _, ok, err := s.store.GetAccount(ctx, in.AppID, ch, in.OpenID); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, fmt.Errorf("account not found")
+	}
+
+	accessToken := strings.TrimSpace(in.AccessToken)
+	var fetched *auth.UserProfile
+	if code := strings.TrimSpace(in.Code); code != "" && s.profiles != nil {
+		tok, oid, prof, exErr := s.profiles.ExchangeCode(ctx, in.AppID, ch, code)
+		if exErr != nil && prof == nil {
+			return nil, fmt.Errorf("profile exchange: %w", exErr)
+		}
+		if tok != "" {
+			accessToken = tok
+		}
+		if oid != "" && oid != in.OpenID {
+			// Keep session open_id authoritative; still use fetched profile fields.
+		}
+		fetched = prof
+		_ = exErr
+	}
+	if fetched == nil {
+		if s.profiles == nil {
+			return nil, fmt.Errorf("profile provider not configured")
+		}
+		fetched, err = s.profiles.FetchProfile(ctx, in.AppID, ch, in.OpenID, accessToken)
+		if err != nil {
+			return nil, fmt.Errorf("profile fetch: %w", err)
+		}
+	}
+	nick := strings.TrimSpace(fetched.Nickname)
+	avatar := strings.TrimSpace(fetched.AvatarURL)
+	if nick == "" && avatar == "" {
+		return nil, fmt.Errorf("empty profile from provider")
+	}
+	updated, err := s.store.UpdateProfile(ctx, in.AppID, ch, in.OpenID, nick, avatar)
+	if err != nil {
+		return nil, err
+	}
+	return profileFromReg(updated, "sync"), nil
+}
+
+// UpdatePlayerProfile lets the client push nickname/avatar (e.g. from TTMinisSDK.getUserInfo).
+func (s *Service) UpdatePlayerProfile(ctx context.Context, in UpdateProfileInput) (*PlayerProfile, error) {
+	ch, err := domain.NormalizeChannel(in.Channel)
+	if err != nil {
+		return nil, err
+	}
+	if in.AppID == "" || in.OpenID == "" {
+		return nil, fmt.Errorf("app_id and open_id required")
+	}
+	nick := domain.FirstNonEmpty(in.Nickname, in.Username)
+	avatar := domain.FirstNonEmpty(in.AvatarURL, in.Avatar)
+	if nick == "" && avatar == "" {
+		return nil, fmt.Errorf("nickname or avatar required")
+	}
+	if utf8RuneCount(nick) > 32 {
+		return nil, fmt.Errorf("nickname too long (max 32)")
+	}
+	if utf8RuneCount(avatar) > 512 {
+		return nil, fmt.Errorf("avatar_url too long (max 512)")
+	}
+	updated, err := s.store.UpdateProfile(ctx, in.AppID, ch, in.OpenID, nick, avatar)
+	if err != nil {
+		return nil, err
+	}
+	return profileFromReg(updated, "update"), nil
+}
+
+func profileFromReg(reg domain.PlayerRegister, source string) *PlayerProfile {
+	aid := reg.PlayerID
+	if aid == "" {
+		aid = domain.AccountID(reg.Channel, reg.OpenID)
+	}
+	nick := usernameOrExtra(reg)
+	avatar := avatarOrExtra(reg)
+	return &PlayerProfile{
+		AppID:     reg.AppID,
+		Channel:   reg.Channel,
+		ChannelID: reg.Channel,
+		OpenID:    reg.OpenID,
+		AccountID: aid,
+		PlayerID:  aid,
+		Username:  nick,
+		Nickname:  nick,
+		AvatarURL: avatar,
+		Avatar:    avatar,
+		Source:    source,
+	}
 }

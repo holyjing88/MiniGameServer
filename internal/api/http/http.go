@@ -18,17 +18,27 @@ type Server struct {
 
 func New(svc *service.Service) *Server {
 	s := &Server{svc: svc, mux: http.NewServeMux()}
-	s.mux.HandleFunc("/healthz", s.handleHealth)
-	s.mux.HandleFunc("/v1/auth/login", s.handleLogin)
-	s.mux.HandleFunc("/v1/auth/register", s.handleRegister)
-	s.mux.HandleFunc("/v1/session", s.handleLogin) // legacy alias → login
-	s.mux.HandleFunc("/v1/score", s.handleScore)
-	s.mux.HandleFunc("/v1/leaderboard", s.handleLeaderboard)
-	s.mux.HandleFunc("/v1/imrank/setImRankData", s.handleSetImRankData)
-	s.mux.HandleFunc("/v1/imrank/getImRankList", s.handleGetImRankList)
-	s.mux.HandleFunc("/v1/imrank/getImRankData", s.handleGetImRankData)
-	s.mux.HandleFunc("/v1/player/register", s.handleRegister) // legacy alias → register
-	s.mux.HandleFunc("/v1/stats/register", s.handleRegisterStats)
+	// Canonical routes are under /api/... ; bare /v1/... kept as legacy aliases.
+	reg := func(path string, h http.HandlerFunc) {
+		s.mux.HandleFunc("/api"+path, h)
+		s.mux.HandleFunc(path, h)
+	}
+	reg("/healthz", s.handleHealth)
+	reg("/v1/auth/login", s.handleLogin)
+	reg("/v1/auth/register", s.handleRegister)
+	reg("/v1/session", s.handleLogin) // legacy alias → login
+	reg("/v1/score", s.handleScore)
+	reg("/v1/leaderboard", s.handleLeaderboard)
+	reg("/v1/imrank/setImRankData", s.handleSetImRankData)
+	reg("/v1/imrank/getImRankList", s.handleGetImRankList)
+	reg("/v1/imrank/getImRankData", s.handleGetImRankData)
+	reg("/v1/player/register", s.handleRegister) // legacy alias → register
+	reg("/v1/player/profile", s.handlePlayerProfile)
+	reg("/v1/player/profile/sync", s.handlePlayerProfileSync)
+	// Public: authorize/login code → nickname/avatar (no session). For VampireDormitory etc.
+	reg("/v1/tiktok/profile", s.handleTikTokProfile)
+	reg("/v1/auth/tt_profile", s.handleTikTokProfile)
+	reg("/v1/stats/register", s.handleRegisterStats)
 	return s
 }
 
@@ -62,7 +72,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		if nr, ok := err.(*service.NeedRegisterInfo); ok {
 			writeJSON(w, http.StatusNotFound, map[string]interface{}{
 				"code":       "NEED_REGISTER",
-				"msg":        "account not registered; call /v1/auth/register then login",
+				"msg":        "account not registered; call /api/v1/auth/register then login",
 				"open_id":    nr.OpenID,
 				"channel":    nr.Channel,
 				"channel_id": nr.ChannelID,
@@ -90,6 +100,9 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		Code         string `json:"code"`
 		OpenID       string `json:"open_id"`
 		Username     string `json:"username"`
+		Nickname     string `json:"nickname"`
+		AvatarURL    string `json:"avatar_url"`
+		Avatar       string `json:"avatar"`
 		ClickID      string `json:"click_id"`
 		ClickId      string `json:"clickid"`
 		Ttclid       string `json:"ttclid"`
@@ -102,6 +115,8 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	ch := domain.FirstNonEmpty(body.ChannelID, body.ChannelId, body.Channel)
 	clickID := domain.FirstNonEmpty(body.ClickID, body.ClickId, body.Ttclid)
+	username := domain.FirstNonEmpty(body.Username, body.Nickname)
+	avatar := domain.FirstNonEmpty(body.AvatarURL, body.Avatar)
 	// Optional session: if present, may supply open_id from claims when code omitted.
 	if body.Code == "" && body.OpenID == "" {
 		if claims, ok := s.trySession(r); ok {
@@ -116,7 +131,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := s.svc.Register(r.Context(), service.RegisterInput{
 		AppID: body.AppID, Channel: ch, Code: body.Code, OpenID: body.OpenID,
-		Username: body.Username, ClickID: clickID,
+		Username: username, AvatarURL: avatar, ClickID: clickID,
 		PlatformKind: body.PlatformKind, ExtraJSON: body.ExtraJSON,
 	})
 	if err != nil {
@@ -458,6 +473,115 @@ func (s *Server) ensureAppChannel(w http.ResponseWriter, claims *auth.Claims, ap
 		return errAppChannelMismatch
 	}
 	return nil
+}
+
+func (s *Server) handlePlayerProfile(w http.ResponseWriter, r *http.Request) {
+	claims, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		out, err := s.svc.GetPlayerProfile(r.Context(), claims.AppID, claims.Channel, claims.OpenID)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "PROFILE_FAIL", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
+	case http.MethodPost, http.MethodPut:
+		var body struct {
+			Username  string `json:"username"`
+			Nickname  string `json:"nickname"`
+			AvatarURL string `json:"avatar_url"`
+			Avatar    string `json:"avatar"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeErr(w, http.StatusBadRequest, "BAD_REQUEST", "invalid json")
+			return
+		}
+		out, err := s.svc.UpdatePlayerProfile(r.Context(), service.UpdateProfileInput{
+			AppID: claims.AppID, Channel: claims.Channel, OpenID: claims.OpenID,
+			Username: body.Username, Nickname: body.Nickname,
+			AvatarURL: body.AvatarURL, Avatar: body.Avatar,
+		})
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "PROFILE_UPDATE_FAIL", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
+	default:
+		writeErr(w, http.StatusMethodNotAllowed, "METHOD", "GET or POST required")
+	}
+}
+
+func (s *Server) handlePlayerProfileSync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "METHOD", "POST required")
+		return
+	}
+	claims, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		AccessToken string `json:"access_token"`
+		AccessTok   string `json:"accessToken"`
+		Code        string `json:"code"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	out, err := s.svc.SyncPlayerProfile(r.Context(), service.SyncProfileInput{
+		AppID: claims.AppID, Channel: claims.Channel, OpenID: claims.OpenID,
+		AccessToken: domain.FirstNonEmpty(body.AccessToken, body.AccessTok),
+		Code:        body.Code,
+	})
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "PROFILE_SYNC_FAIL", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleTikTokProfile exchanges TikTok authorize/login code for nick+avatar.
+// No session required. Prefer body.auth_code (Cocos HttpUnit overwrites "code").
+func (s *Server) handleTikTokProfile(w http.ResponseWriter, r *http.Request) {
+	setCORS(w, r)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "METHOD", "POST required")
+		return
+	}
+	var body struct {
+		AuthCode  string `json:"auth_code"`
+		TTCode    string `json:"tt_code"`
+		Code      string `json:"code"`
+		Channel   string `json:"channel"`
+		ChannelID string `json:"channel_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "BAD_JSON", "invalid json body")
+		return
+	}
+	code := domain.FirstNonEmpty(body.AuthCode, body.TTCode, body.Code)
+	ch := domain.FirstNonEmpty(body.ChannelID, body.Channel)
+	out, err := s.svc.FetchProfileByAuthCode(r.Context(), code, ch)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "TT_PROFILE_FAIL", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func setCORS(w http.ResponseWriter, r *http.Request) {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		origin = "*"
+	}
+	w.Header().Set("Access-Control-Allow-Origin", origin)
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 }
 
 func (s *Server) handleRegisterStats(w http.ResponseWriter, r *http.Request) {

@@ -33,11 +33,16 @@ func main() {
 
 	sessions := auth.NewSessionManager(cfg.SessionSecret, cfg.SessionTTL)
 	resolver := auth.OpenIDResolver(auth.MockResolver{})
-	if cfg.AuthMode == "tiktok" {
-		log.Printf("auth mode=tiktok requested; using mock until TikTok OAuth wired")
-	}
 	cache := hotcache.New()
 	svc := service.New(cfg, st, cache, sessions, resolver)
+	if cfg.AuthMode == "tiktok" {
+		if cfg.TikTokClientKey != "" && cfg.TikTokClientSecret != "" {
+			log.Printf("auth mode=tiktok; profile via TikTok Open API")
+			svc.SetProfileProvider(auth.NewTikTokProfileProvider(cfg.TikTokClientKey, cfg.TikTokClientSecret))
+		} else {
+			log.Printf("auth mode=tiktok but RANK_TT_CLIENT_KEY/SECRET empty; using mock profile provider")
+		}
+	}
 
 	httpSrv := &http.Server{
 		Addr:              cfg.HTTPAddr,

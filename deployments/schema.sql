@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS player_register (
   player_id        VARCHAR(128) NOT NULL,
   open_id          VARCHAR(128) NOT NULL DEFAULT '',
   username         VARCHAR(64)  NOT NULL DEFAULT '',
+  avatar_url       VARCHAR(512) NOT NULL DEFAULT '',
   click_id         VARCHAR(256) NOT NULL DEFAULT '',
   platform_kind    TINYINT      NOT NULL DEFAULT 1,
   registered_at_ms BIGINT       NOT NULL,

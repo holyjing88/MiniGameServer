@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 
@@ -100,6 +101,24 @@ func (s *Store) ReportRegister(_ context.Context, r domain.PlayerRegister) (bool
 	}
 	s.registers[k] = r
 	return true, r, nil
+}
+
+func (s *Store) UpdateProfile(_ context.Context, appID, channel, openID, username, avatarURL string) (domain.PlayerRegister, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k := regKey(appID, channel, openID)
+	old, ok := s.registers[k]
+	if !ok {
+		return domain.PlayerRegister{}, fmt.Errorf("account not found")
+	}
+	if username != "" {
+		old.Username = username
+	}
+	if avatarURL != "" {
+		old.AvatarURL = avatarURL
+	}
+	s.registers[k] = old
+	return old, nil
 }
 
 func (s *Store) CountByChannel(_ context.Context, appID string) (int64, []domain.ChannelCount, error) {

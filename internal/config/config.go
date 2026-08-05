@@ -7,20 +7,22 @@ import (
 )
 
 type Config struct {
-	HTTPAddr       string
-	GRPCAddr       string
-	StoreDriver    string // memory | mysql
-	MySQLDSN       string
-	SessionSecret  string
-	SessionTTL     time.Duration
-	ServiceToken   string
-	TopNDefault    int
-	TopNMax        int
-	RefreshSec     int
-	Timezone       string // UTC or Asia/Shanghai etc.
-	AuthMode       string // mock | tiktok
+	HTTPAddr           string
+	GRPCAddr           string
+	StoreDriver        string // memory | mysql
+	MySQLDSN           string
+	SessionSecret      string
+	SessionTTL         time.Duration
+	ServiceToken       string
+	TopNDefault        int
+	TopNMax            int
+	RefreshSec         int
+	Timezone           string // UTC or Asia/Shanghai etc.
+	AuthMode           string // mock | tiktok
+	TikTokAppID        string // TikTok Developer App ID (platform)
 	TikTokClientKey    string
 	TikTokClientSecret string
+	DefaultAppID       string // optional default game app_id
 }
 
 func Load() Config {
@@ -37,8 +39,10 @@ func Load() Config {
 		RefreshSec:         getenvInt("RANK_REFRESH_SEC", 30),
 		Timezone:           getenv("RANK_TZ", "UTC"),
 		AuthMode:           getenv("RANK_AUTH_MODE", "mock"),
+		TikTokAppID:        os.Getenv("RANK_TT_APP_ID"),
 		TikTokClientKey:    os.Getenv("RANK_TT_CLIENT_KEY"),
 		TikTokClientSecret: os.Getenv("RANK_TT_CLIENT_SECRET"),
+		DefaultAppID:       getenv("RANK_DEFAULT_APP_ID", "parking_smart_brain"),
 	}
 }
 
