@@ -1,0 +1,11 @@
+/bin/
+/tools/protoc/
+*.exe
+.idea/
+.vscode/
+*.log
+deployments/linux/.env
+deployments/db/db.env
+deployments/.env
+# mysql.env is the shared credential source committed with project defaults
+

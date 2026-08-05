@@ -1,0 +1,194 @@
+syntax = "proto3";
+package rank.v1;
+option go_package = "minigameserver/api/gen/rank/v1;rankv1";
+
+enum PeriodType {
+  PERIOD_UNSPECIFIED = 0;
+  PERIOD_WEEK = 1;
+  PERIOD_MONTH = 2;
+  PERIOD_BOTH = 3;
+  PERIOD_DAY = 4;
+  PERIOD_ALL = 5;
+}
+
+service RankService {
+  rpc UpsertMaxScore(UpsertMaxScoreRequest) returns (UpsertMaxScoreResponse);
+  rpc GetLeaderboard(GetLeaderboardRequest) returns (GetLeaderboardResponse);
+  // ImRank-aligned (Douyin-compatible) for NO_NATIVE_RANK channels.
+  rpc SetImRankData(SetImRankDataRequest) returns (SetImRankDataResponse);
+  rpc GetImRankList(GetImRankListRequest) returns (GetImRankListResponse);
+  rpc GetImRankData(GetImRankDataRequest) returns (GetImRankDataResponse);
+}
+
+service PlayerService {
+  // First-touch channel attribution: duplicate player keeps original channel.
+  rpc ReportPlayerRegister(ReportPlayerRegisterRequest) returns (ReportPlayerRegisterResponse);
+  rpc GetRegisterStats(GetRegisterStatsRequest) returns (GetRegisterStatsResponse);
+}
+
+message UpsertMaxScoreRequest {
+  string app_id = 1;
+  string board_id = 2;
+  string zone_id = 3;
+  string channel = 4; // channel_id — required; isolates boards per platform
+  string player_id = 5;
+  int64 score = 6;
+  PeriodType period_type = 7; // write shortcut: BOTH/FULL/DAY/WEEK/MONTH/ALL
+  string rank_type = 8;       // optional override: "day"|"week"|"month"|"all"|"both"|"full"|"week,month"
+}
+
+message PeriodScoreResult {
+  bool updated = 1;
+  int64 best_score = 2;
+  int32 self_rank = 3;
+}
+
+message UpsertMaxScoreResponse {
+  PeriodScoreResult week = 1;
+  PeriodScoreResult month = 2;
+  PeriodScoreResult day = 3;
+  PeriodScoreResult all = 4;
+  string channel = 5;
+}
+
+message GetLeaderboardRequest {
+  string app_id = 1;
+  string board_id = 2;
+  string zone_id = 3;
+  string channel = 4; // channel_id — required
+  PeriodType period_type = 5;
+  int32 top_n = 6;
+  string player_id = 7;
+  string rank_type = 8; // preferred: day|week|month|all (overrides period_type when set)
+}
+
+message GetLeaderboardResponse {
+  int64 snapshot_ts_ms = 1;
+  bool cache_hit = 2;
+  int32 self_rank = 3;
+  int64 self_score = 4;
+  bytes entries_gzip = 5;
+  string channel = 6;
+  string rank_type = 7;
+}
+
+message ReportPlayerRegisterRequest {
+  string app_id = 1;
+  string channel = 2;
+  string player_id = 3;
+  int32 platform_kind = 4;
+  string extra_json = 5;
+}
+
+message ReportPlayerRegisterResponse {
+  bool is_new = 1;
+  string channel = 2;          // attributed channel (first touch)
+  int64 registered_at_ms = 3;
+}
+
+message GetRegisterStatsRequest {
+  string app_id = 1;
+}
+
+message ChannelCount {
+  string channel = 1;
+  int64 count = 2;
+}
+
+message GetRegisterStatsResponse {
+  int64 total = 1;
+  repeated ChannelCount by_channel = 2;
+}
+
+// --- ImRank-aligned ---
+
+message SetImRankDataRequest {
+  string app_id = 1;
+  string board_id = 2;
+  string zone_id = 3;
+  string channel = 4; // channel_id
+  string player_id = 5;
+  int32 data_type = 6;
+  string value = 7;
+  int32 priority = 8;
+  string extra = 9;
+  // relation_type must NOT be set (illegal on setImRankData).
+  string relation_type = 10;
+  string rank_type = 11; // empty/full → all windows; or day|week|month|all|both|comma-list
+}
+
+message SetImRankDataResponse {
+  PeriodScoreResult day = 1;
+  PeriodScoreResult week = 2;
+  PeriodScoreResult month = 3;
+  PeriodScoreResult all = 4;
+  string channel = 5;
+}
+
+message GetImRankListRequest {
+  string app_id = 1;
+  string board_id = 2;
+  string zone_id = 3;
+  string channel = 4; // channel_id
+  string player_id = 5;
+  string relation_type = 6; // friend | all | default
+  string rank_type = 7;     // day | week | month | all
+  int32 data_type = 8;
+  string suffix = 9;
+  string rank_title = 10;
+  int32 top_n = 11;
+}
+
+message CompactRankEntry {
+  int32 r = 1;
+  string p = 2;
+  int64 s = 3;
+}
+
+message GetImRankListResponse {
+  string rank_type = 1;
+  string relation_type = 2;
+  int32 data_type = 3;
+  string zone_id = 4;
+  string suffix = 5;
+  string rank_title = 6;
+  string display = 7; // "custom"
+  bool friend_unsupported = 8;
+  int64 snapshot_ts_ms = 9;
+  bool cache_hit = 10;
+  int32 self_rank = 11;
+  int64 self_score = 12;
+  bytes entries_gzip = 13;
+  repeated CompactRankEntry items = 14;
+  string channel = 15;
+}
+
+message GetImRankDataRequest {
+  string app_id = 1;
+  string board_id = 2;
+  string zone_id = 3;
+  string channel = 4; // channel_id
+  string player_id = 5;
+  string relation_type = 6;
+  string rank_type = 7;
+  int32 data_type = 8;
+  int32 page_num = 9;
+  int32 page_size = 10;
+}
+
+message GetImRankDataResponse {
+  string rank_type = 1;
+  string relation_type = 2;
+  int32 data_type = 3;
+  string zone_id = 4;
+  int32 page_num = 5;
+  int32 page_size = 6;
+  bool friend_unsupported = 7;
+  int64 snapshot_ts_ms = 8;
+  bool cache_hit = 9;
+  int32 self_rank = 10;
+  int64 self_score = 11;
+  int32 total = 12;
+  repeated CompactRankEntry items = 13;
+  string channel = 14;
+}

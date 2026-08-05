@@ -1,0 +1,23 @@
+[Unit]
+Description=MiniGameServer RankServer (minigamesvr)
+Documentation=file:///app/minigamesvr
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/app/minigamesvr
+EnvironmentFile=/app/minigamesvr/minigamesvr.env
+ExecStart=/app/minigamesvr/minigamesvr
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65535
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/app/minigamesvr
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
