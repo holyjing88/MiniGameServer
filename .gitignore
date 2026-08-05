@@ -1,4 +1,5 @@
-/bin/
+/release/bin/*
+!/release/bin/.gitkeep
 /tools/protoc/
 *.exe
 .idea/

@@ -19,7 +19,7 @@ COMPOSE_FILE="${REPO_ROOT}/deployments/docker-compose.yml"
 ENV_FILE="${SCRIPT_DIR}/.env"
 ENV_EXAMPLE="${SCRIPT_DIR}/env.example"
 MYSQL_ENV_FILE="${REPO_ROOT}/deployments/db/mysql.env"
-SERVICE_UNIT="${SCRIPT_DIR}/minigameserver.service"
+SERVICE_UNIT="${REPO_ROOT}/release/cfg/minigameserver.service"
 
 MODE="compose" # compose | native
 ACTION="up"    # up | down | status | logs

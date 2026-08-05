@@ -2,8 +2,8 @@
 # Deploy MiniGameServer business process only (no Docker).
 #
 # Target : /app/minigamesvr
-# - directory missing  → create
-# - directory has files → backup first, then deploy
+# - directory missing  鈫?create
+# - directory has files 鈫?backup first, then deploy
 #
 # Usage (on Linux server, usually as root):
 #   sudo ./deployments/linux/deploy-app.sh
@@ -16,13 +16,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 MYSQL_ENV_FILE="${REPO_ROOT}/deployments/db/mysql.env"
 TIKTOK_ENV_FILE="${REPO_ROOT}/deployments/db/tiktok.env"
-SERVICE_UNIT_SRC="${SCRIPT_DIR}/minigamesvr.service"
+SERVICE_UNIT_SRC="${REPO_ROOT}/release/cfg/minigamesvr.service"
 APP_SCRIPTS_DIR="${SCRIPT_DIR}/app-scripts"
 
 INSTALL_DIR="${INSTALL_DIR:-/app/minigamesvr}"
 BACKUP_ROOT="${BACKUP_ROOT:-/app}"
 BINARY_NAME="minigamesvr"
 ENV_NAME="minigamesvr.env"
+ENV_EXAMPLE="${REPO_ROOT}/release/cfg/minigamesvr.env.example"
 SERVICE_NAME="minigamesvr"
 ACTION="deploy" # deploy | restart | status | stop | logs
 
@@ -126,7 +127,10 @@ write_env_file() {
       cp -a "${source_env}" "${dest}"
     fi
   else
-    cat >"${dest}" <<EOF
+    if [[ -f "${ENV_EXAMPLE}" ]]; then
+      cp -a "${ENV_EXAMPLE}" "${dest}"
+    else
+      cat >"${dest}" <<EOF
 RANK_HTTP_ADDR=:8080
 RANK_GRPC_ADDR=:9090
 RANK_STORE=mysql
@@ -139,6 +143,7 @@ RANK_TOPN_MAX=100
 RANK_REFRESH_SEC=30
 RANK_TZ=UTC
 EOF
+    fi
     log "wrote new env: ${dest}"
   fi
 
@@ -168,7 +173,7 @@ backup_if_needed() {
   ts="$(date +%Y%m%d_%H%M%S)"
   bak="${BACKUP_ROOT}/minigamesvr_backup_${ts}"
   mkdir -p "${BACKUP_ROOT}"
-  log "backing up ${INSTALL_DIR} → ${bak}"
+  log "backing up ${INSTALL_DIR} 鈫?${bak}"
   cp -a "${INSTALL_DIR}" "${bak}"
   echo "${bak}" >"${BACKUP_ROOT}/.minigamesvr_last_backup"
   log "backup done"
