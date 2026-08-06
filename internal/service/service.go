@@ -78,6 +78,22 @@ func (s *Service) SetProfileProvider(p auth.ProfileProvider) {
 	}
 }
 
+// AuthModeForChannel returns the effective auth mode for ops/health checks.
+func (s *Service) AuthModeForChannel(channel string) string {
+	if s == nil {
+		return ""
+	}
+	return s.cfg.ModeForChannel(channel)
+}
+
+// TikTokReady reports whether TikTok client credentials are configured.
+func (s *Service) TikTokReady() bool {
+	if s == nil {
+		return false
+	}
+	return s.cfg.TikTokReady()
+}
+
 type CreateSessionInput struct {
 	AppID   string
 	Channel string

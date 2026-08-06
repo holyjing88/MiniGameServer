@@ -13,6 +13,8 @@ func TestParseAuthModes(t *testing.T) {
 		{"mock,tiktok", []string{"mock", "tiktok"}},
 		{" tiktok , mock , tiktok ", []string{"tiktok", "mock"}},
 		{"unknown,mock", []string{"mock"}},
+		{"\"tiktok\"", []string{"tiktok"}},
+		{"tiktok\r", []string{"tiktok"}},
 	}
 	for _, c := range cases {
 		got := ParseAuthModes(c.in)

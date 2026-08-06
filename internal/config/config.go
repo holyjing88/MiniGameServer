@@ -24,6 +24,7 @@ type Config struct {
 	TopNMax            int
 	RefreshSec         int
 	Timezone           string // UTC or Asia/Shanghai etc.
+	LogLevel           string            // trace|debug|info|error|fatal (RANK_LOG_LEVEL)
 	AuthMode           string            // raw RANK_AUTH_MODE (csv or single)
 	AuthModes          []string          // parsed enabled modes
 	AuthChannelMap     map[string]string // channel -> mode (from RANK_AUTH_CHANNEL_MAP)
@@ -47,12 +48,13 @@ func Load() Config {
 		TopNMax:            getenvInt("RANK_TOPN_MAX", 100),
 		RefreshSec:         getenvInt("RANK_REFRESH_SEC", 30),
 		Timezone:           getenv("RANK_TZ", "UTC"),
+		LogLevel:           getenv("RANK_LOG_LEVEL", "info"),
 		AuthMode:           rawMode,
 		AuthModes:          ParseAuthModes(rawMode),
 		AuthChannelMap:     ParseChannelMap(os.Getenv("RANK_AUTH_CHANNEL_MAP")),
-		TikTokAppID:        os.Getenv("RANK_TT_APP_ID"),
-		TikTokClientKey:    os.Getenv("RANK_TT_CLIENT_KEY"),
-		TikTokClientSecret: os.Getenv("RANK_TT_CLIENT_SECRET"),
+		TikTokAppID:        cleanEnvValue(os.Getenv("RANK_TT_APP_ID")),
+		TikTokClientKey:    cleanEnvValue(os.Getenv("RANK_TT_CLIENT_KEY")),
+		TikTokClientSecret: cleanEnvValue(os.Getenv("RANK_TT_CLIENT_SECRET")),
 		DefaultAppID:       getenv("RANK_DEFAULT_APP_ID", "parking_smart_brain"),
 	}
 	return cfg
@@ -97,7 +99,7 @@ func ParseChannelMap(raw string) map[string]string {
 }
 
 func normalizeAuthMode(s string) string {
-	switch strings.ToLower(strings.TrimSpace(s)) {
+	switch strings.ToLower(cleanEnvValue(s)) {
 	case AuthModeMock, "dev", "test":
 		return AuthModeMock
 	case AuthModeTikTok, "tt", "tiktok_minis":
@@ -107,15 +109,24 @@ func normalizeAuthMode(s string) string {
 	}
 }
 
+// cleanEnvValue strips CR/LF, surrounding quotes — common when env files are edited on Windows
+// or EnvironmentFile values keep quotes.
+func cleanEnvValue(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.Trim(s, "\"'")
+	s = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(s, "\r", ""), "\n", ""))
+	return s
+}
+
 func splitCSV(raw string) []string {
-	raw = strings.TrimSpace(raw)
+	raw = cleanEnvValue(raw)
 	if raw == "" {
 		return nil
 	}
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
-		p = strings.TrimSpace(p)
+		p = cleanEnvValue(p)
 		if p != "" {
 			out = append(out, p)
 		}
@@ -179,7 +190,7 @@ func (c Config) ModeForChannel(channel string) string {
 }
 
 func getenv(k, def string) string {
-	if v := os.Getenv(k); v != "" {
+	if v := cleanEnvValue(os.Getenv(k)); v != "" {
 		return v
 	}
 	return def

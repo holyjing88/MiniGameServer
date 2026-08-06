@@ -157,6 +157,10 @@ func (p *TikTokProfileProvider) ExchangeCode(ctx context.Context, _, _, code str
 	if code == "" {
 		return "", "", nil, fmt.Errorf("empty code")
 	}
+	// Frontend / gateway may pass URL-encoded codes; TikTok expects the raw value.
+	if dec, err := url.QueryUnescape(code); err == nil && dec != "" {
+		code = dec
+	}
 	if p.ClientKey == "" || p.ClientSecret == "" {
 		return "", "", nil, fmt.Errorf("TikTok client_key/secret not configured")
 	}
@@ -180,16 +184,30 @@ func (p *TikTokProfileProvider) ExchangeCode(ctx context.Context, _, _, code str
 		return "", "", nil, fmt.Errorf("tiktok oauth/token HTTP %d: %s", resp.StatusCode, truncate(string(body), 256))
 	}
 	var tok struct {
-		AccessToken string `json:"access_token"`
-		OpenID      string `json:"open_id"`
-		Error       string `json:"error"`
-		Description string `json:"error_description"`
+		AccessToken string          `json:"access_token"`
+		OpenID      string          `json:"open_id"`
+		Error       json.RawMessage `json:"error"`
+		Description string          `json:"error_description"`
+		Message     string          `json:"message"`
 	}
 	if err := json.Unmarshal(body, &tok); err != nil {
 		return "", "", nil, fmt.Errorf("tiktok oauth/token decode: %w", err)
 	}
 	if tok.AccessToken == "" {
-		return "", "", nil, fmt.Errorf("tiktok oauth/token: %s %s", tok.Error, tok.Description)
+		errStr := strings.TrimSpace(string(tok.Error))
+		if len(tok.Error) > 0 && tok.Error[0] == '{' {
+			var nested struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			}
+			if json.Unmarshal(tok.Error, &nested) == nil {
+				errStr = strings.TrimSpace(nested.Code + " " + nested.Message)
+			}
+		} else {
+			errStr = strings.Trim(errStr, "\"")
+		}
+		desc := firstNonEmpty(tok.Description, tok.Message)
+		return "", "", nil, fmt.Errorf("tiktok oauth/token: %s %s", errStr, desc)
 	}
 	prof, err := p.FetchProfile(ctx, "", "", tok.OpenID, tok.AccessToken)
 	if err != nil {
@@ -197,6 +215,15 @@ func (p *TikTokProfileProvider) ExchangeCode(ctx context.Context, _, _, code str
 		return tok.AccessToken, tok.OpenID, nil, err
 	}
 	return tok.AccessToken, tok.OpenID, prof, nil
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 func truncate(s string, n int) string {

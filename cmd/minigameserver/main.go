@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -17,6 +16,7 @@ import (
 	"minigameserver/internal/auth"
 	"minigameserver/internal/config"
 	"minigameserver/internal/hotcache"
+	"minigameserver/internal/logging"
 	"minigameserver/internal/service"
 	"minigameserver/internal/store"
 	"minigameserver/internal/store/memory"
@@ -25,9 +25,12 @@ import (
 
 func main() {
 	cfg := config.Load()
+	logging.SetDefault(logging.New(logging.ParseLevel(cfg.LogLevel), os.Stdout))
+	logging.Info("startup log_level=%s", logging.ParseLevel(cfg.LogLevel))
+
 	st, err := openStore(cfg)
 	if err != nil {
-		log.Fatalf("store: %v", err)
+		logging.Fatal("store: %v", err)
 	}
 	defer st.Close()
 
@@ -35,46 +38,48 @@ func main() {
 	profiles, resolver := auth.BuildAuthStack(cfg)
 	cache := hotcache.New()
 	svc := service.NewWithAuth(cfg, st, cache, sessions, resolver, profiles)
-	log.Printf("auth modes=%v tiktok_ready=%v", cfg.AuthModes, cfg.TikTokReady())
+	logging.Info("auth modes=%v tiktok_ready=%v", cfg.AuthModes, cfg.TikTokReady())
 	if len(cfg.AuthChannelMap) > 0 {
-		log.Printf("auth channel_map=%v", cfg.AuthChannelMap)
+		logging.Info("auth channel_map=%v", cfg.AuthChannelMap)
 	} else {
-		log.Printf("auth channel_map=defaults(tiktok_minis/douyin->tiktok, others->mock)")
+		logging.Info("auth channel_map=defaults(tiktok_minis/douyin->tiktok, others->mock)")
 	}
 
 	httpSrv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpapi.New(svc).Handler(),
+		Handler:           logging.HTTPMiddleware(httpapi.New(svc).Handler()),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	lis, err := net.Listen("tcp", cfg.GRPCAddr)
 	if err != nil {
-		log.Fatalf("grpc listen: %v", err)
+		logging.Fatal("grpc listen: %v", err)
 	}
-	gs := grpc.NewServer()
+	gs := grpc.NewServer(grpc.UnaryInterceptor(logging.UnaryServerInterceptor()))
 	grpcapi.Register(gs, svc)
 
 	go func() {
-		log.Printf("HTTP listening on %s", cfg.HTTPAddr)
+		logging.Info("HTTP listening on %s", cfg.HTTPAddr)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("http: %v", err)
+			logging.Fatal("http: %v", err)
 		}
 	}()
 	go func() {
-		log.Printf("gRPC listening on %s", cfg.GRPCAddr)
+		logging.Info("gRPC listening on %s", cfg.GRPCAddr)
 		if err := gs.Serve(lis); err != nil {
-			log.Fatalf("grpc: %v", err)
+			logging.Fatal("grpc: %v", err)
 		}
 	}()
 
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
-	<-ch
+	sig := <-ch
+	logging.Info("shutdown signal=%v", sig)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(ctx)
 	gs.GracefulStop()
+	logging.Info("shutdown complete")
 }
 
 func openStore(cfg config.Config) (store.Store, error) {
@@ -88,9 +93,10 @@ func openStore(cfg config.Config) (store.Store, error) {
 			_ = ms.Close()
 			return nil, err
 		}
+		logging.Info("using mysql store")
 		return ms, nil
 	default:
-		log.Printf("using memory store")
+		logging.Info("using memory store")
 		return memory.New(), nil
 	}
 }

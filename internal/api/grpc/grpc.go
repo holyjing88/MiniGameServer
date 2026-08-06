@@ -12,6 +12,7 @@ import (
 
 	rankv1 "minigameserver/api/gen/rank/v1"
 	"minigameserver/internal/domain"
+	"minigameserver/internal/logging"
 	"minigameserver/internal/service"
 )
 
@@ -32,8 +33,11 @@ func Register(gs *grpc.Server, svc *service.Service) {
 
 func (s *RankServer) UpsertMaxScore(ctx context.Context, req *rankv1.UpsertMaxScoreRequest) (*rankv1.UpsertMaxScoreResponse, error) {
 	if err := requireServiceAuth(ctx, s.svc); err != nil {
+		logging.Debug("grpc.UpsertMaxScore auth_fail req_id=%s err=%v", logging.RequestID(ctx), err)
 		return nil, err
 	}
+	logging.Debug("grpc.UpsertMaxScore req_id=%s app_id=%s board_id=%s player_id=%s score=%d",
+		logging.RequestID(ctx), req.GetAppId(), req.GetBoardId(), req.GetPlayerId(), req.GetScore())
 	var writeSpec domain.PeriodType
 	if rt := strings.TrimSpace(req.GetRankType()); rt != "" {
 		writeSpec = domain.PeriodType(rt)
