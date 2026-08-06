@@ -168,7 +168,7 @@ print_summary() {
   Env   : ${ENV_FILE}
   Mode  : ${MODE}
 
-  MySQL schema: deployments/schema.sql
+  MySQL schema: deployments/db/schema.sql
     - Compose first boot: /docker-entrypoint-initdb.d
     - App start also runs EnsureSchema (CREATE IF NOT EXISTS)
 

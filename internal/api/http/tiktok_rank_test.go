@@ -2,6 +2,8 @@ package httpapi_test
 
 import (
 	"bytes"
+	"compress/gzip"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,10 +12,29 @@ import (
 	httpapi "minigameserver/internal/api/http"
 	"minigameserver/internal/auth"
 	"minigameserver/internal/config"
+	"minigameserver/internal/domain"
 	"minigameserver/internal/hotcache"
 	"minigameserver/internal/service"
 	"minigameserver/internal/store/memory"
 )
+
+func decodeEntries(t *testing.T, b64 string) []domain.CompactEntry {
+	t.Helper()
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		t.Fatalf("b64: %v", err)
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("gzip: %v", err)
+	}
+	defer zr.Close()
+	var items []domain.CompactEntry
+	if err := json.NewDecoder(zr).Decode(&items); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	return items
+}
 
 func TestImRank_SetAndGet_NoSession(t *testing.T) {
 	cfg := config.Config{
@@ -64,8 +85,15 @@ func TestImRank_SetAndGet_NoSession(t *testing.T) {
 	if out["self_rank"] == nil || out["self_rank"].(float64) < 1 {
 		t.Fatalf("self_rank missing: %+v", out)
 	}
-	items, _ := out["items"].([]interface{})
+	if _, hasItems := out["items"]; hasItems {
+		t.Fatalf("HTTP must not return plaintext items: %+v", out)
+	}
+	ent, _ := out["entries"].(string)
+	if ent == "" || out["encoding"] != "gzip+base64" {
+		t.Fatalf("entries missing: %+v", out)
+	}
+	items := decodeEntries(t, ent)
 	if len(items) < 1 {
-		t.Fatalf("items empty: %+v", out)
+		t.Fatalf("decoded entries empty: %+v", out)
 	}
 }

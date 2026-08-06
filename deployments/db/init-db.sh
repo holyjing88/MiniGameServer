@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # MiniGameServer MySQL initialization (standalone).
 #
-# Creates database and applies deployments/schema.sql.
+# Creates database and applies deployments/db/schema.sql.
 # Uses a single MySQL account: root (no separate app user).
 #
 # Usage:
@@ -23,6 +23,7 @@ SCHEMA_SQL=""
 USE_DOCKER=0
 DRY_RUN=0
 CHECK_ONLY=0
+REINIT=0
 ENV_FILE_ARG=""
 
 log()  { printf '[init-db] %s\n' "$*"; }
@@ -41,14 +42,16 @@ Options:
   --database NAME         App database (default: minigameserver)
   --container NAME        Docker container name (default: mgs-mysql)
   --env-file PATH         Load DB env file first (flags still override)
+  --reinit                DROP DATABASE and recreate from schema.sql (destructive)
   --check                 Verify DB/tables exist; do not change anything
   --dry-run               Print SQL that would be applied, then exit
   -h, --help              Show help
 
 Account: root only. Config: CLI > env vars > mysql.env / db.env > defaults
 
-Schema search order:
-  \$SCHEMA_SQL, deployments/schema.sql, db/schema.sql
+Schema: deployments/db/schema.sql only (no ALTER / dual path).
+
+Stop the app before --reinit.
 EOF
 }
 
@@ -114,6 +117,7 @@ while [[ $# -gt 0 ]]; do
     --database)       MYSQL_DATABASE="$2"; shift 2 ;;
     --container)      MYSQL_DOCKER_CONTAINER="$2"; shift 2 ;;
     --check)          CHECK_ONLY=1; shift ;;
+    --reinit)         REINIT=1; shift ;;
     --dry-run)        DRY_RUN=1; shift ;;
     --user|--password|--skip-user)
       err "app user options removed; use root only (--root-user / --root-password)"
@@ -123,20 +127,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 resolve_schema_sql() {
-  local c
-  for c in \
-    "${SCHEMA_SQL:-}" \
-    "${DEPLOYMENTS_DIR}/schema.sql" \
-    "${SCRIPT_DIR}/schema.sql"
-  do
-    [[ -n "${c}" && -f "${c}" ]] || continue
-    SCHEMA_SQL="${c}"
-    return 0
-  done
-  return 1
+  local c="${SCRIPT_DIR}/schema.sql"
+  [[ -f "${c}" ]] || return 1
+  SCHEMA_SQL="${c}"
+  return 0
 }
 
-resolve_schema_sql || err "schema not found (tried deployments/schema.sql and db/schema.sql)"
+resolve_schema_sql || err "schema not found: deployments/db/schema.sql"
 log "schema: ${SCHEMA_SQL}"
 
 sql_ident() {
@@ -149,12 +146,22 @@ sql_ident() {
 render_bootstrap() {
   local db_id
   db_id="$(sql_ident "${MYSQL_DATABASE}")"
-  cat <<EOF
+  if [[ "${REINIT}" -eq 1 ]]; then
+    cat <<EOF
+DROP DATABASE IF EXISTS ${db_id};
+CREATE DATABASE ${db_id}
+  DEFAULT CHARACTER SET utf8mb4
+  DEFAULT COLLATE utf8mb4_unicode_ci;
+USE ${db_id};
+EOF
+  else
+    cat <<EOF
 CREATE DATABASE IF NOT EXISTS ${db_id}
   DEFAULT CHARACTER SET utf8mb4
   DEFAULT COLLATE utf8mb4_unicode_ci;
 USE ${db_id};
 EOF
+  fi
 }
 
 mysql_admin() {
@@ -230,6 +237,9 @@ else
 fi
 
 log "creating database (if needed) and applying schema..."
+if [[ "${REINIT}" -eq 1 ]]; then
+  log "REINIT: DROP DATABASE ${MYSQL_DATABASE} then recreate (all data lost)"
+fi
 mysql_admin <"${FULL_SQL}"
 log "SQL applied"
 

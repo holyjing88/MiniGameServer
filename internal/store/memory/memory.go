@@ -45,6 +45,13 @@ func (s *Store) UpsertMax(_ context.Context, e domain.Entry) (bool, int64, error
 		m[e.PlayerID] = e
 		return true, e.Score, nil
 	}
+	// Refresh display Extra (nick/avatar) even when score does not rise.
+	// Empty Extra must not wipe an existing nickname payload.
+	if len(e.Extra) > 0 {
+		old.Extra = append([]byte(nil), e.Extra...)
+		m[e.PlayerID] = old
+		return true, old.Score, nil
+	}
 	return false, old.Score, nil
 }
 

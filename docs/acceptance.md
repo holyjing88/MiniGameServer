@@ -13,7 +13,7 @@
 | A7 | ? session ?? 401 | `acceptance.TestHTTP_UnauthorizedWithoutSession` | ??? |
 | A8 | gRPC ?????/? + entries_gzip | `acceptance.TestGRPC_UpsertAndLeaderboard_ServiceAuth` | ??? |
 | A9 | Redis stub ?? | `internal/store/redis` | ???? |
-| A10 | MySQL schema | `deployments/schema.sql` | compose ?? |
+| A10 | MySQL schema | `deployments/db/schema.sql` | compose ?? |
 | A11 | ?????? + HTTP ?? | `acceptance.TestHTTP_PlayerRegister_FirstTouchChannel` | ??? |
 | A12 | gRPC ??/?? | `acceptance.TestGRPC_PlayerRegisterAndStats` | ??? |
 | A13 | ImRank set/list/data + reject relationType | `acceptance.TestHTTP_ImRankAlignedAPIs` | ??? |

@@ -1,3 +1,8 @@
+-- MiniGameServer schema (single source of truth under deployments/db/).
+-- Fresh install / soft boot: CREATE IF NOT EXISTS
+-- Full wipe: stop service, then ./deployments/db/init-db.sh --reinit
+-- No ALTER migration scripts.
+
 CREATE TABLE IF NOT EXISTS rank_score (
   id            BIGINT PRIMARY KEY AUTO_INCREMENT,
   board_key     BINARY(16)     NOT NULL,
@@ -9,7 +14,7 @@ CREATE TABLE IF NOT EXISTS rank_score (
   channel       VARCHAR(32)    NOT NULL DEFAULT '',
   player_id     VARCHAR(128)   NOT NULL,
   score         BIGINT         NOT NULL,
-  extra         VARBINARY(256) NULL,
+  extra         MEDIUMBLOB     NULL,
   updated_at    BIGINT         NOT NULL,
   UNIQUE KEY uk_board_player (board_key, player_id),
   KEY idx_board_score (board_key, score DESC, updated_at ASC)
@@ -22,7 +27,7 @@ CREATE TABLE IF NOT EXISTS rank_board_meta (
   top_n       INT         NOT NULL DEFAULT 100,
   refresh_sec INT         NOT NULL DEFAULT 30,
   PRIMARY KEY (app_id, board_id, zone_id)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS player_register (
   id               BIGINT PRIMARY KEY AUTO_INCREMENT,

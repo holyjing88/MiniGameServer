@@ -378,7 +378,7 @@ CREATE TABLE rank_score (
   channel       VARCHAR(32)    NOT NULL DEFAULT '',
   player_id     VARCHAR(128)   NOT NULL,
   score         BIGINT         NOT NULL,
-  extra         VARBINARY(256) NULL,
+  extra         MEDIUMBLOB     NULL,
   updated_at    BIGINT         NOT NULL,
   UNIQUE KEY uk_board_player (board_key, player_id),
   KEY idx_board_score (board_key, score DESC, updated_at ASC)
@@ -499,7 +499,7 @@ MiniGameServer/
     hotcache/
   deployments/
     docker-compose.yml
-    schema.sql
+    db/schema.sql
   go.mod
 ```
 

@@ -466,15 +466,30 @@ func TestHTTP_ImRankAlignedAPIs(t *testing.T) {
 	raw, _ = io.ReadAll(res.Body)
 	res.Body.Close()
 	var listOut struct {
-		Display   string                `json:"display"`
-		RankType  string                `json:"rankType"`
-		SelfRank  int32                 `json:"self_rank"`
-		SelfScore int64                 `json:"self_score"`
-		Items     []domain.CompactEntry `json:"items"`
+		Display   string `json:"display"`
+		RankType  string `json:"rankType"`
+		SelfRank  int32  `json:"self_rank"`
+		SelfScore int64  `json:"self_score"`
+		Encoding  string `json:"encoding"`
+		Entries   string `json:"entries"`
 	}
 	_ = json.Unmarshal(raw, &listOut)
-	if listOut.Display != "custom" || listOut.RankType != "week" || listOut.SelfRank != 1 || listOut.SelfScore != 42 || len(listOut.Items) != 1 {
+	if listOut.Display != "custom" || listOut.RankType != "week" || listOut.SelfRank != 1 || listOut.SelfScore != 42 {
 		t.Fatalf("getImRankList: %s", raw)
+	}
+	if listOut.Encoding != "gzip+base64" || listOut.Entries == "" {
+		t.Fatalf("getImRankList entries: %s", raw)
+	}
+	gz, err := base64.StdEncoding.DecodeString(listOut.Entries)
+	if err != nil {
+		t.Fatalf("entries b64: %v", err)
+	}
+	var listItems []domain.CompactEntry
+	if err := hotcache.GunzipJSON(gz, &listItems); err != nil {
+		t.Fatalf("entries gunzip: %v", err)
+	}
+	if len(listItems) != 1 {
+		t.Fatalf("getImRankList decoded items: %s", raw)
 	}
 
 	dataBody, _ := json.Marshal(map[string]interface{}{

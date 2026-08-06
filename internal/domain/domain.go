@@ -2,6 +2,7 @@ package domain
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -275,8 +276,45 @@ type CompactEntry struct {
 	R int32  `json:"r"`
 	P string `json:"p"`
 	S int64  `json:"s"`
+	N string `json:"n,omitempty"` // nickname from Extra (optional)
+	A string `json:"a,omitempty"` // avatar_url from Extra (optional)
 }
 
 func ToCompact(rank int32, e Entry) CompactEntry {
-	return CompactEntry{R: rank, P: e.PlayerID, S: e.Score}
+	return CompactEntry{
+		R: rank, P: e.PlayerID, S: e.Score,
+		N: nicknameFromExtra(e.Extra),
+		A: avatarFromExtra(e.Extra),
+	}
+}
+
+func extraStringField(extra []byte, keys ...string) string {
+	if len(extra) == 0 {
+		return ""
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(extra, &m); err != nil || m == nil {
+		return ""
+	}
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			if s, ok := v.(string); ok {
+				s = strings.TrimSpace(s)
+				if s != "" {
+					return s
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// nicknameFromExtra reads display name from setImRankData Extra JSON.
+func nicknameFromExtra(extra []byte) string {
+	return extraStringField(extra, "nickname", "nick", "display_name", "displayName", "username")
+}
+
+// avatarFromExtra reads avatar URL from setImRankData Extra JSON.
+func avatarFromExtra(extra []byte) string {
+	return extraStringField(extra, "avatar_url", "avatarUrl", "avatar", "head_url", "headUrl")
 }

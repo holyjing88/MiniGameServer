@@ -47,6 +47,7 @@ func (s *Store) UpsertMax(ctx context.Context, e domain.Entry) (bool, int64, err
 	}
 
 	zone := domain.NormalizeZone(e.ZoneID)
+	// Score still max-only. Extra: write when new Extra is non-empty; never wipe with empty.
 	_, err = s.db.ExecContext(ctx, `
 INSERT INTO rank_score (
   board_key, app_id, board_id, zone_id, period_key, platform_kind, channel,
@@ -55,7 +56,7 @@ INSERT INTO rank_score (
 ON DUPLICATE KEY UPDATE
   score = IF(VALUES(score) > score, VALUES(score), score),
   updated_at = IF(VALUES(score) > score, VALUES(updated_at), updated_at),
-  extra = IF(VALUES(score) > score, VALUES(extra), extra)
+  extra = IF(VALUES(extra) IS NOT NULL AND LENGTH(VALUES(extra)) > 0, VALUES(extra), extra)
 `, e.BoardKey, e.AppID, e.BoardID, zone, e.PeriodKey, e.Channel, e.PlayerID, e.Score, nullBytes(e.Extra), e.UpdatedAt)
 	if err != nil {
 		return false, 0, err
@@ -66,6 +67,10 @@ ON DUPLICATE KEY UPDATE
 	}
 	if e.Score > oldScore.Int64 {
 		return true, e.Score, nil
+	}
+	// Extra-only refresh: treat as updated so callers can invalidate hotcache.
+	if len(e.Extra) > 0 {
+		return true, oldScore.Int64, nil
 	}
 	return false, oldScore.Int64, nil
 }
@@ -129,13 +134,12 @@ WHERE board_key=? AND (score > ? OR (score = ? AND updated_at < ?))`,
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) EnsureSchema(ctx context.Context) error {
+	// Single schema.sql only — no ALTER compatibility. Use init-db.sh --reinit for wipe+reload.
 	for _, stmt := range splitSQLStatements(deployments.SchemaSQL) {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
 	}
-	// Best-effort migrations for existing deployments created before avatar_url.
-	_, _ = s.db.ExecContext(ctx, `ALTER TABLE player_register ADD COLUMN avatar_url VARCHAR(512) NOT NULL DEFAULT ''`)
 	return nil
 }
 

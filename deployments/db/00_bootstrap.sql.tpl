@@ -7,4 +7,4 @@ CREATE DATABASE IF NOT EXISTS `minigameserver`
 
 USE `minigameserver`;
 
--- Then apply ../schema.sql (rank_score / rank_board_meta / player_register).
+-- Then apply schema.sql in this directory (rank_score / rank_board_meta / player_register).

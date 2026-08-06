@@ -20,7 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 RELEASE_DIR="${REPO_ROOT}/release"
 DB_DIR="${REPO_ROOT}/deployments/db"
-SCHEMA_SQL="${REPO_ROOT}/deployments/schema.sql"
+SCHEMA_SQL="${REPO_ROOT}/deployments/db/schema.sql"
 INSTALL_SH="${SCRIPT_DIR}/install.sh"
 OUT=""
 
@@ -72,9 +72,8 @@ for f in minigamesvr.service minigameserver.service minigamesvr.env.example; do
 done
 
 cp -a "${DB_DIR}" "${stage}/deployments/db"
-install -m 644 "${SCHEMA_SQL}" "${stage}/deployments/schema.sql"
-# Keep a copy inside db/ so init-db.sh works when only the db/ tree is copied.
-install -m 644 "${SCHEMA_SQL}" "${stage}/deployments/db/schema.sql"
+[[ -f "${SCHEMA_SQL}" ]] || { echo "[package] missing ${SCHEMA_SQL}" >&2; exit 1; }
+[[ -f "${stage}/deployments/db/schema.sql" ]] || { echo "[package] db/schema.sql missing after copy" >&2; exit 1; }
 mkdir -p "${stage}/release/log"
 : > "${stage}/release/log/.gitkeep"
 

@@ -265,11 +265,7 @@ install_tree() {
   mkdir -p "${INSTALL_DIR}/deployments"
   cp -a "${SRC_DIR}/release" "${INSTALL_DIR}/release"
   cp -a "${SRC_DIR}/deployments/db" "${INSTALL_DIR}/deployments/db"
-  if [[ -f "${SRC_DIR}/deployments/schema.sql" ]]; then
-    cp -a "${SRC_DIR}/deployments/schema.sql" "${INSTALL_DIR}/deployments/schema.sql"
-  elif [[ -f "${SRC_DIR}/deployments/db/schema.sql" ]]; then
-    cp -a "${SRC_DIR}/deployments/db/schema.sql" "${INSTALL_DIR}/deployments/schema.sql"
-  fi
+  [[ -f "${INSTALL_DIR}/deployments/db/schema.sql" ]] || err "missing deployments/db/schema.sql"
   chmod 755 "${INSTALL_DIR}/release/bin/minigamesvr" || true
   chmod 755 "${INSTALL_DIR}/release/bin/"*.sh
   ensure_env_file

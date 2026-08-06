@@ -510,8 +510,9 @@ type GetImRankListOutput struct {
 	SelfScore         int64                 `json:"self_score"`
 	Encoding          string                `json:"encoding"`
 	Entries           string                `json:"entries"`
-	Items             []domain.CompactEntry `json:"items"`
-	EntriesRaw        []byte                `json:"-"`
+	// Items is for gRPC / in-process only — never serialized on HTTP (clients use entries).
+	Items      []domain.CompactEntry `json:"-"`
+	EntriesRaw []byte                `json:"-"`
 }
 
 func (s *Service) GetImRankList(ctx context.Context, in GetImRankListInput) (*GetImRankListOutput, error) {
