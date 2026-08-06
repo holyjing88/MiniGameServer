@@ -17,6 +17,6 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=builder /out/minigameserver /app/minigameserver
 
-EXPOSE 8080 9090
+EXPOSE 8000 8001
 USER nobody
 ENTRYPOINT ["/app/minigameserver"]

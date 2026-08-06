@@ -1,5 +1,4 @@
-/release/bin/*
-!/release/bin/.gitkeep
+/release/bin/minigamesvr
 /tools/protoc/
 *.exe
 .idea/
@@ -9,4 +8,9 @@ deployments/linux/.env
 deployments/db/db.env
 deployments/.env
 # mysql.env is the shared credential source committed with project defaults
-
+/dist/
+/release/bin/minigamesvr.pid
+/release/cfg/minigamesvr.env
+*.tar.gz
+/release/log/*
+!/release/log/.gitkeep

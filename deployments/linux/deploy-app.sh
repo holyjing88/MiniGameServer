@@ -2,8 +2,8 @@
 # Deploy MiniGameServer business process only (no Docker).
 #
 # Target : /app/minigamesvr
-# - directory missing  鈫?create
-# - directory has files 鈫?backup first, then deploy
+# - directory missing  閳?create
+# - directory has files 閳?backup first, then deploy
 #
 # Usage (on Linux server, usually as root):
 #   sudo ./deployments/linux/deploy-app.sh
@@ -17,7 +17,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 MYSQL_ENV_FILE="${REPO_ROOT}/deployments/db/mysql.env"
 TIKTOK_ENV_FILE="${REPO_ROOT}/deployments/db/tiktok.env"
 SERVICE_UNIT_SRC="${REPO_ROOT}/release/cfg/minigamesvr.service"
-APP_SCRIPTS_DIR="${SCRIPT_DIR}/app-scripts"
+APP_SCRIPTS_DIR="${REPO_ROOT}/release/bin"
 
 INSTALL_DIR="${INSTALL_DIR:-/app/minigamesvr}"
 BACKUP_ROOT="${BACKUP_ROOT:-/app}"
@@ -69,6 +69,7 @@ load_mysql_env() {
   if [[ -f "${MYSQL_ENV_FILE}" ]]; then
     set -a
     # shellcheck disable=SC1090
+    # mysql.env must quote RANK_MYSQL_DSN (contains () ? &)
     source "${MYSQL_ENV_FILE}"
     set +a
     log "loaded ${MYSQL_ENV_FILE}"
@@ -88,7 +89,8 @@ load_mysql_env() {
   MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-jgyjgyjgy}"
   MYSQL_DATABASE="${MYSQL_DATABASE:-minigameserver}"
   RANK_MYSQL_DSN="${RANK_MYSQL_DSN:-${MYSQL_ROOT_USER}:${MYSQL_ROOT_PASSWORD}@tcp(${MYSQL_HOST}:${MYSQL_PORT})/${MYSQL_DATABASE}?parseTime=true&loc=UTC&charset=utf8mb4}"
-  RANK_AUTH_MODE="${RANK_AUTH_MODE:-tiktok}"
+  RANK_AUTH_MODE="${RANK_AUTH_MODE:-mock,tiktok}"
+  RANK_AUTH_CHANNEL_MAP="${RANK_AUTH_CHANNEL_MAP:-tiktok_minis:tiktok,douyin:tiktok,weixin:mock}"
   RANK_TT_APP_ID="${RANK_TT_APP_ID:-7657847833046812688}"
   RANK_TT_CLIENT_KEY="${RANK_TT_CLIENT_KEY:-mg79au52hgl5ggpi}"
   RANK_TT_CLIENT_SECRET="${RANK_TT_CLIENT_SECRET:-QZAxJCXzGhbK2RWwt3IpXBHN90yNoKto}"
@@ -97,14 +99,19 @@ load_mysql_env() {
 
 upsert_env_key() {
   local file="$1" key="$2" val="$3"
+  local qval line tmp
+  qval="${val//\\/\\\\}"
+  qval="${qval//\"/\\\"}"
+  line="${key}=\"${qval}\""
+  tmp="$(mktemp)"
   if grep -qE "^${key}=" "${file}"; then
-    if sed --version >/dev/null 2>&1; then
-      sed -i "s|^${key}=.*|${key}=${val}|" "${file}"
-    else
-      sed -i '' "s|^${key}=.*|${key}=${val}|" "${file}"
-    fi
+    awk -v k="${key}" -v l="${line}" '
+      index($0, k "=") == 1 { print l; next }
+      { print }
+    ' "${file}" >"${tmp}" && mv "${tmp}" "${file}"
   else
-    printf '%s=%s\n' "${key}" "${val}" >>"${file}"
+    printf '%s\n' "${line}" >>"${file}"
+    rm -f "${tmp}"
   fi
 }
 
@@ -131,8 +138,8 @@ write_env_file() {
       cp -a "${ENV_EXAMPLE}" "${dest}"
     else
       cat >"${dest}" <<EOF
-RANK_HTTP_ADDR=:8080
-RANK_GRPC_ADDR=:9090
+RANK_HTTP_ADDR=:8000
+RANK_GRPC_ADDR=:8001
 RANK_STORE=mysql
 RANK_MYSQL_DSN=${RANK_MYSQL_DSN}
 RANK_SESSION_SECRET=change-me-session-secret
@@ -150,6 +157,9 @@ EOF
   upsert_env_key "${dest}" "RANK_STORE" "mysql"
   upsert_env_key "${dest}" "RANK_MYSQL_DSN" "${RANK_MYSQL_DSN}"
   upsert_env_key "${dest}" "RANK_AUTH_MODE" "${RANK_AUTH_MODE}"
+  if [[ -n "${RANK_AUTH_CHANNEL_MAP:-}" ]]; then
+    upsert_env_key "${dest}" "RANK_AUTH_CHANNEL_MAP" "${RANK_AUTH_CHANNEL_MAP}"
+  fi
   upsert_env_key "${dest}" "RANK_TT_APP_ID" "${RANK_TT_APP_ID}"
   upsert_env_key "${dest}" "RANK_TT_CLIENT_KEY" "${RANK_TT_CLIENT_KEY}"
   upsert_env_key "${dest}" "RANK_TT_CLIENT_SECRET" "${RANK_TT_CLIENT_SECRET}"
@@ -173,7 +183,7 @@ backup_if_needed() {
   ts="$(date +%Y%m%d_%H%M%S)"
   bak="${BACKUP_ROOT}/minigamesvr_backup_${ts}"
   mkdir -p "${BACKUP_ROOT}"
-  log "backing up ${INSTALL_DIR} 鈫?${bak}"
+  log "backing up ${INSTALL_DIR} 閳?${bak}"
   cp -a "${INSTALL_DIR}" "${bak}"
   echo "${bak}" >"${BACKUP_ROOT}/.minigamesvr_last_backup"
   log "backup done"
@@ -226,7 +236,7 @@ install_systemd() {
 }
 
 wait_health() {
-  local url="http://127.0.0.1:8080/healthz"
+  local url="http://127.0.0.1:8000/healthz"
   local i
   for ((i = 1; i <= 30; i++)); do
     if curl -sf "${url}" >/dev/null 2>&1; then
@@ -246,9 +256,9 @@ print_summary() {
   binary  : ${INSTALL_DIR}/${BINARY_NAME}
   env     : ${INSTALL_DIR}/${ENV_NAME}
   service : ${SERVICE_NAME}.service
-  health  : http://127.0.0.1:8080/healthz
-  HTTP    : :8080
-  gRPC    : :9090
+  health  : http://127.0.0.1:8000/healthz
+  HTTP    : :8000
+  gRPC    : :8001
 
   ctl scripts:
     sudo ${INSTALL_DIR}/start.sh
@@ -294,7 +304,7 @@ do_stop() {
 do_status() {
   need_cmd systemctl
   systemctl --no-pager status "${SERVICE_NAME}" || true
-  if curl -sf "http://127.0.0.1:8080/healthz" >/dev/null 2>&1; then
+  if curl -sf "http://127.0.0.1:8000/healthz" >/dev/null 2>&1; then
     log "HTTP healthz: OK"
   else
     log "HTTP healthz: not ready"

@@ -258,7 +258,7 @@ Body：`{"code":"SESSION_EXPIRED","msg":"..."}`
 
 ### 4.6 gRPC（服务间，保留）
 
-进程另开 **gRPC 端口**（如 `:9090`），供 Account / BMS / 其它后端调用。  
+进程另开 **gRPC 端口**（如 `:8001`），供 Account / BMS / 其它后端调用。  
 语义与 HTTP 对齐，共享 `domain` / `store` / `hotcache`。
 
 **鉴权（与玩家 Session 分离）：**

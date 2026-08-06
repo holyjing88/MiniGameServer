@@ -129,12 +129,27 @@ WHERE board_key=? AND (score > ? OR (score = ? AND updated_at < ?))`,
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) EnsureSchema(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, deployments.SchemaSQL); err != nil {
-		return err
+	for _, stmt := range splitSQLStatements(deployments.SchemaSQL) {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
 	}
 	// Best-effort migrations for existing deployments created before avatar_url.
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE player_register ADD COLUMN avatar_url VARCHAR(512) NOT NULL DEFAULT ''`)
 	return nil
+}
+
+func splitSQLStatements(sqlText string) []string {
+	parts := strings.Split(sqlText, ";")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 func (s *Store) GetAccount(ctx context.Context, appID, channel, openID string) (domain.PlayerRegister, bool, error) {

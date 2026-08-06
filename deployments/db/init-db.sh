@@ -14,11 +14,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOYMENTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-SCHEMA_SQL="${DEPLOYMENTS_DIR}/schema.sql"
 DB_ENV_FILE="${SCRIPT_DIR}/db.env"
 DB_ENV_EXAMPLE="${SCRIPT_DIR}/db.env.example"
 MYSQL_ENV_FILE="${SCRIPT_DIR}/mysql.env"
 LINUX_ENV_FILE="${DEPLOYMENTS_DIR}/linux/.env"
+SCHEMA_SQL=""
 
 USE_DOCKER=0
 DRY_RUN=0
@@ -46,6 +46,9 @@ Options:
   -h, --help              Show help
 
 Account: root only. Config: CLI > env vars > mysql.env / db.env > defaults
+
+Schema search order:
+  \$SCHEMA_SQL, deployments/schema.sql, db/schema.sql
 EOF
 }
 
@@ -119,7 +122,22 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -f "${SCHEMA_SQL}" ]] || err "schema not found: ${SCHEMA_SQL}"
+resolve_schema_sql() {
+  local c
+  for c in \
+    "${SCHEMA_SQL:-}" \
+    "${DEPLOYMENTS_DIR}/schema.sql" \
+    "${SCRIPT_DIR}/schema.sql"
+  do
+    [[ -n "${c}" && -f "${c}" ]] || continue
+    SCHEMA_SQL="${c}"
+    return 0
+  done
+  return 1
+}
+
+resolve_schema_sql || err "schema not found (tried deployments/schema.sql and db/schema.sql)"
+log "schema: ${SCHEMA_SQL}"
 
 sql_ident() {
   case "$1" in

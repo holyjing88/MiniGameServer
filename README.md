@@ -16,7 +16,7 @@
 cd D:\0_mycompany\0projs\MiniGameServer
 go test ./...
 go run ./cmd/minigameserver
-# HTTP :8080  gRPC :9090
+# HTTP :8000  gRPC :8001
 ```
 
 ### ????????????
@@ -55,6 +55,7 @@ gRPC?`PlayerService.ReportPlayerRegister` / `GetRegisterStats`?
 | [docs/decisions.md](docs/decisions.md) | ?? |
 | [docs/acceptance.md](docs/acceptance.md) | ????? |
 | [docs/register.md](docs/register.md) | ?????? |
+| [docs/linux-scripts.md](docs/linux-scripts.md) | Server scripts: Linux only |
 
 ## ????
 

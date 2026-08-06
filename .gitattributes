@@ -1,0 +1,5 @@
+# Keep shell/service scripts Unix (LF) so Linux shebang works.
+*.sh text eol=lf
+*.service text eol=lf
+*.example text eol=lf
+**/env.example text eol=lf

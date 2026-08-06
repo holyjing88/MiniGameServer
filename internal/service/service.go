@@ -29,9 +29,33 @@ type Service struct {
 }
 
 func New(cfg config.Config, st store.Store, cache *hotcache.Cache, sessions *auth.SessionManager, resolver auth.OpenIDResolver) *Service {
-	var profiles auth.ProfileProvider = auth.MockProfileProvider{}
-	if cfg.AuthMode == "tiktok" && cfg.TikTokClientKey != "" && cfg.TikTokClientSecret != "" {
-		profiles = auth.NewTikTokProfileProvider(cfg.TikTokClientKey, cfg.TikTokClientSecret)
+	profiles, builtResolver := auth.BuildAuthStack(cfg)
+	if resolver == nil {
+		resolver = builtResolver
+	}
+	return &Service{
+		cfg:      cfg,
+		store:    st,
+		cache:    cache,
+		sessions: sessions,
+		resolver: resolver,
+		profiles: profiles,
+		svcAuth:  auth.StaticServiceAuth{Token: cfg.ServiceToken},
+		loc:      domain.LoadLocation(cfg.Timezone),
+		now:      time.Now,
+	}
+}
+
+// NewWithAuth is like New but allows injecting a prebuilt auth stack (tests).
+func NewWithAuth(cfg config.Config, st store.Store, cache *hotcache.Cache, sessions *auth.SessionManager, resolver auth.OpenIDResolver, profiles auth.ProfileProvider) *Service {
+	if resolver == nil || profiles == nil {
+		p, r := auth.BuildAuthStack(cfg)
+		if profiles == nil {
+			profiles = p
+		}
+		if resolver == nil {
+			resolver = r
+		}
 	}
 	return &Service{
 		cfg:      cfg,

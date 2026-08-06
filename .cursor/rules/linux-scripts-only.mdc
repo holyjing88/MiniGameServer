@@ -1,0 +1,33 @@
+---
+description: Server deploy/build/package/install scripts must run on Linux only, never on Windows PC
+alwaysApply: true
+---
+
+# Linux-only server scripts
+
+All server-side shell scripts under `deployments/` (and packaged `dist/install.sh`) are **Linux-only**.
+
+## Rules
+
+- **Run on Linux server only** — build, package, install, deploy, uninstall, start/stop/status.
+- **Never run on Windows PC** (local Cursor shell, Git Bash, WSL-as-substitute for prod path, etc.).
+- Agent must **not** execute these scripts on the Windows workspace; tell the user the exact Linux commands instead.
+- Keep scripts **LF** (see `.gitattributes`). Editing on PC is fine; do not introduce CRLF — CRLF breaks shebang (`: No such file or directory`).
+
+## Typical scripts (Linux)
+
+```bash
+# on Linux server, repo root or deployments/linux
+./deployments/linux/build.sh
+./deployments/linux/package.sh
+# then
+cd dist && sudo ./install.sh ./minigamesvr_*.tar.gz
+```
+
+## Wrong
+
+```bash
+# on Windows PC — do not
+./deployments/linux/package.sh
+./deployments/linux/install.sh ...
+```

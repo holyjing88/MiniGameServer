@@ -78,18 +78,28 @@ sync_mysql_passwords() {
   # Overlay MySQL credentials from deployments/db/mysql.env into linux/.env
   [[ -f "${MYSQL_ENV_FILE}" ]] || return 0
   [[ -f "${ENV_FILE}" ]] || return 0
-  local key val
+  local key val line tmp
   for key in MYSQL_ROOT_PASSWORD MYSQL_DATABASE MYSQL_PORT RANK_MYSQL_DSN; do
     val="$(grep -E "^${key}=" "${MYSQL_ENV_FILE}" | head -n1 | cut -d= -f2- || true)"
     [[ -n "${val}" ]] || continue
+    # Strip surrounding quotes from mysql.env; re-quote when writing (DSN has () ? &).
+    if [[ "${val}" =~ ^\"(.*)\"$ ]]; then
+      val="${BASH_REMATCH[1]}"
+    elif [[ "${val}" =~ ^\'(.*)\'$ ]]; then
+      val="${BASH_REMATCH[1]}"
+    fi
+    val="${val//\\/\\\\}"
+    val="${val//\"/\\\"}"
+    line="${key}=\"${val}\""
+    tmp="$(mktemp)"
     if grep -qE "^${key}=" "${ENV_FILE}"; then
-      if sed --version >/dev/null 2>&1; then
-        sed -i "s|^${key}=.*|${key}=${val}|" "${ENV_FILE}"
-      else
-        sed -i '' "s|^${key}=.*|${key}=${val}|" "${ENV_FILE}"
-      fi
+      awk -v k="${key}" -v l="${line}" '
+        index($0, k "=") == 1 { print l; next }
+        { print }
+      ' "${ENV_FILE}" >"${tmp}" && mv "${tmp}" "${ENV_FILE}"
     else
-      printf '%s=%s\n' "${key}" "${val}" >>"${ENV_FILE}"
+      printf '%s\n' "${line}" >>"${ENV_FILE}"
+      rm -f "${tmp}"
     fi
   done
   log "synced MySQL credentials from ${MYSQL_ENV_FILE}"
@@ -147,8 +157,8 @@ wait_http() {
 
 print_summary() {
   load_env
-  local http_port="${HTTP_PORT:-8080}"
-  local grpc_port="${GRPC_PORT:-9090}"
+  local http_port="${HTTP_PORT:-8000}"
+  local grpc_port="${GRPC_PORT:-8001}"
   cat <<EOF
 
 ========== MiniGameServer ready ==========
@@ -193,7 +203,7 @@ action_status() {
   fi
   local http_port
   http_port="$(grep -E '^HTTP_PORT=' "${ENV_FILE}" | cut -d= -f2- || true)"
-  http_port="${http_port:-8080}"
+  http_port="${http_port:-8000}"
   if curl -sf "http://127.0.0.1:${http_port}/healthz" >/dev/null 2>&1; then
     log "HTTP healthz: OK"
   else
@@ -229,7 +239,7 @@ deploy_compose() {
 
   compose up -d "${build_args[@]}"
 
-  wait_http "http://127.0.0.1:${HTTP_PORT:-8080}/healthz" 90
+  wait_http "http://127.0.0.1:${HTTP_PORT:-8000}/healthz" 90
   print_summary
 }
 
@@ -250,7 +260,7 @@ deploy_native() {
   load_env
 
   local install_dir="${INSTALL_DIR:-/opt/minigameserver}"
-  local http_port="${HTTP_PORT:-8080}"
+  local http_port="${HTTP_PORT:-8000}"
 
   log "starting MySQL only via Compose..."
   # Temporarily override: start mysql service only
@@ -294,8 +304,8 @@ deploy_native() {
 
   # runtime env for systemd
   cat >"${install_dir}/minigameserver.env" <<EOF
-RANK_HTTP_ADDR=${RANK_HTTP_ADDR:-:8080}
-RANK_GRPC_ADDR=${RANK_GRPC_ADDR:-:9090}
+RANK_HTTP_ADDR=${RANK_HTTP_ADDR:-:8000}
+RANK_GRPC_ADDR=${RANK_GRPC_ADDR:-:8001}
 RANK_STORE=mysql
 RANK_MYSQL_DSN=${RANK_MYSQL_DSN:-${MYSQL_ROOT_USER:-root}:${MYSQL_ROOT_PASSWORD:-jgyjgyjgy}@tcp(127.0.0.1:${MYSQL_PORT:-3306})/${MYSQL_DATABASE:-minigameserver}?parseTime=true&loc=UTC&charset=utf8mb4}
 RANK_SESSION_SECRET=${RANK_SESSION_SECRET}

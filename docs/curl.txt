@@ -1,0 +1,3 @@
+curl -X POST "https://www.starcrystalpte.com/api/v1/tiktok/profile" \
+  -H "Content-Type: application/json" \
+  -d '{"auth_code":"mock:test_user","channel_id":"tiktok_minis"}'

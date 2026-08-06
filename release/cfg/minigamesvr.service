@@ -7,8 +7,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/app/minigamesvr
-EnvironmentFile=/app/minigamesvr/minigamesvr.env
-ExecStart=/app/minigamesvr/minigamesvr
+EnvironmentFile=/app/minigamesvr/release/cfg/minigamesvr.env
+ExecStart=/app/minigamesvr/release/bin/minigamesvr
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=65535
