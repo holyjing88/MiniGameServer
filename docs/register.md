@@ -115,8 +115,8 @@ Session 内 `player_id` = `account_id`；榜单写入也使用该 ID。
 | `GET/POST /v1/player/profile` | **不要**（从 Session 取） |
 | `POST /v1/player/profile/sync` | **不要**（从 Session 取） |
 
-注意：TikTok 平台 **App ID**（`7657847833046812688`）≠ HTTP 里的游戏 `app_id`。  
-平台 App ID / Client Key / Secret 只配在**服务器环境变量**，**不要**给客户端。
+注意：TikTok 平台 **App ID**（portal 数字 ID）≠ HTTP 里的游戏业务 `app_id`（如 `parking_smart_brain`）。  
+平台 `client_key` / portal `app_id` 由**客户端按游戏传入**；`client_secret` 只配在服务器 `RANK_TT_CLIENT_SECRETS`，**不要**下发客户端。
 
 ### `POST /api/v1/tiktok/profile`（别名：`/api/v1/auth/tt_profile`；兼容旧路径 `/v1/...`）
 
@@ -128,12 +128,19 @@ Session 内 `player_id` = `account_id`；榜单写入也使用该 ID。
 ```json
 {
   "auth_code": "<TTMinis.game.authorize / login 返回的 code>",
-  "channel_id": "tiktok_minis"
+  "channel_id": "tiktok_minis",
+  "client_key": "<该游戏 TikTok client_key，必填>",
+  "app_id": "<TikTok portal App ID，可选>",
+  "tt_app_id": "<tt… 小游戏 appid，可选>",
+  "mini_app_id": "<业务 app_id，如 parking_smart_brain，可选>"
 }
 ```
 
 字段别名：`auth_code`（推荐）/ `tt_code` / `code`。  
 Cocos 老 `HttpUnit.request_csryw` 会覆盖 body.`code`，客户端应传 **`auth_code`**。
+
+**多游戏**：`client_key` / `app_id` 由**各游戏客户端传入**；服务端用 body 的 `client_key` 在 `RANK_TT_CLIENT_SECRETS` 中查找对应 `client_secret` 换票。  
+**不要**在服务端写死单一 `RANK_TT_CLIENT_KEY` 给所有游戏用。`client_secret` 仅存服务端。
 
 成功：
 
@@ -151,7 +158,7 @@ Cocos 老 `HttpUnit.request_csryw` 会覆盖 body.`code`，客户端应传 **`au
 
 失败：`{"code":"TT_PROFILE_FAIL","msg":"..."}`  
 
-前置：服务器 `RANK_AUTH_MODE=tiktok` 且配置 `RANK_TT_CLIENT_KEY` / `RANK_TT_CLIENT_SECRET`。  
+前置：`RANK_AUTH_MODE` 含 `tiktok`，并配置 `RANK_TT_CLIENT_SECRETS`（或兼容旧的单组 `RANK_TT_CLIENT_KEY` / `RANK_TT_CLIENT_SECRET`）。  
 `code` 一次性、约 5 分钟过期，授权后应立即请求。
 
 ### `GET /v1/player/profile`

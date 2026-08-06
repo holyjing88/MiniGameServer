@@ -121,9 +121,23 @@ func BuildAuthStack(cfg config.Config) (ProfileProvider, OpenIDResolver) {
 	}
 
 	if cfg.AuthModeEnabled(config.AuthModeTikTok) && cfg.TikTokReady() {
-		tt := NewTikTokProfileProvider(cfg.TikTokClientKey, cfg.TikTokClientSecret)
-		providers[config.AuthModeTikTok] = tt
-		resolvers[config.AuthModeTikTok] = TikTokResolver{Provider: tt}
+		// Default provider for login / sync when request has no per-game client_key.
+		// Prefer legacy RANK_TT_CLIENT_KEY; else first entry in RANK_TT_CLIENT_SECRETS.
+		ck := strings.TrimSpace(cfg.TikTokClientKey)
+		cs := strings.TrimSpace(cfg.TikTokClientSecret)
+		if ck == "" || cs == "" {
+			for k, v := range cfg.TikTokClientSecrets {
+				if strings.TrimSpace(k) != "" && strings.TrimSpace(v) != "" {
+					ck, cs = strings.TrimSpace(k), strings.TrimSpace(v)
+					break
+				}
+			}
+		}
+		if ck != "" && cs != "" {
+			tt := NewTikTokProfileProvider(ck, cs)
+			providers[config.AuthModeTikTok] = tt
+			resolvers[config.AuthModeTikTok] = TikTokResolver{Provider: tt}
+		}
 	}
 
 	profiles := NewMultiProfileProvider(cfg, providers, MockProfileProvider{})

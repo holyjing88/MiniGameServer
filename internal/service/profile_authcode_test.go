@@ -18,7 +18,10 @@ func TestFetchProfileByAuthCode_Mock(t *testing.T) {
 	svc := service.New(cfg, st, hotcache.New(), sessions, auth.MockResolver{})
 	svc.SetProfileProvider(auth.MockProfileProvider{})
 
-	out, err := svc.FetchProfileByAuthCode(context.Background(), "mock:player1", "tiktok_minis")
+	out, err := svc.FetchProfileByAuthCode(context.Background(), service.FetchTTProfileInput{
+		Code:    "mock:player1",
+		Channel: "tiktok_minis",
+	})
 	if err != nil {
 		t.Fatalf("FetchProfileByAuthCode: %v", err)
 	}

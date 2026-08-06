@@ -78,6 +78,13 @@ func (s *Service) SetProfileProvider(p auth.ProfileProvider) {
 	}
 }
 
+func (s *Service) DefaultAppID() string {
+	if s == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.cfg.DefaultAppID)
+}
+
 // AuthModeForChannel returns the effective auth mode for ops/health checks.
 func (s *Service) AuthModeForChannel(channel string) string {
 	if s == nil {
@@ -917,15 +924,25 @@ func (s *Service) GetPlayerProfile(ctx context.Context, appID, channel, openID s
 	return profileFromReg(reg, "cache"), nil
 }
 
+// FetchTTProfileInput is the body for POST /api/v1/tiktok/profile.
+// ClientKey / AppID come from each game client — server must not hardcode a single RANK_TT_CLIENT_KEY.
+type FetchTTProfileInput struct {
+	Code      string
+	Channel   string
+	ClientKey string // TikTok client_key (required for real OAuth)
+	AppID     string // TikTok portal / platform app id (optional bookkeeping)
+	MiniAppID string // game business app_id (e.g. parking_smart_brain)
+}
+
 // FetchProfileByAuthCode exchanges a TikTok authorize/login code for nickname + avatar.
 // No session or registered account required — used by games that only need profile display
 // (e.g. VampireDormitory main-menu avatar) before full MiniGameServer login.
-func (s *Service) FetchProfileByAuthCode(ctx context.Context, code, channel string) (*PlayerProfile, error) {
-	code = strings.TrimSpace(code)
+func (s *Service) FetchProfileByAuthCode(ctx context.Context, in FetchTTProfileInput) (*PlayerProfile, error) {
+	code := strings.TrimSpace(in.Code)
 	if code == "" {
 		return nil, fmt.Errorf("auth_code required")
 	}
-	ch := strings.TrimSpace(channel)
+	ch := strings.TrimSpace(in.Channel)
 	if ch == "" {
 		ch = domain.ChannelTikTokMinis
 	}
@@ -933,11 +950,29 @@ func (s *Service) FetchProfileByAuthCode(ctx context.Context, code, channel stri
 	if err != nil {
 		return nil, err
 	}
-	if s.profiles == nil {
-		return nil, fmt.Errorf("profile provider not configured")
+	appID := domain.FirstNonEmpty(in.MiniAppID, in.AppID, s.cfg.DefaultAppID)
+	appID = strings.TrimSpace(appID)
+
+	var provider auth.ProfileProvider
+	mode := s.cfg.ModeForChannel(ch)
+	if mode == config.AuthModeTikTok {
+		ck := strings.TrimSpace(in.ClientKey)
+		if ck == "" {
+			return nil, fmt.Errorf("client_key required (pass from game client; do not rely on server RANK_TT_CLIENT_KEY)")
+		}
+		secret, ok := s.cfg.SecretForClientKey(ck)
+		if !ok {
+			return nil, fmt.Errorf("client_key not registered on server (add to RANK_TT_CLIENT_SECRETS)")
+		}
+		provider = auth.NewTikTokProfileProvider(ck, secret)
+	} else {
+		if s.profiles == nil {
+			return nil, fmt.Errorf("profile provider not configured")
+		}
+		provider = s.profiles
 	}
-	appID := strings.TrimSpace(s.cfg.DefaultAppID)
-	_, oid, prof, exErr := s.profiles.ExchangeCode(ctx, appID, ch, code)
+
+	_, oid, prof, exErr := provider.ExchangeCode(ctx, appID, ch, code)
 	if exErr != nil && prof == nil {
 		return nil, fmt.Errorf("profile exchange: %w", exErr)
 	}

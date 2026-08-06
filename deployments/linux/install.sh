@@ -14,6 +14,7 @@
 #   sudo ./install.sh --dir /app/minigamesvr
 #   sudo ./install.sh --no-start
 #   sudo ./install.sh --no-systemd
+#   sudo ./install.sh --keep-env   # optional: keep previous minigamesvr.env
 set -euo pipefail
 
 if [[ "$(uname -s)" != "Linux" ]]; then
@@ -29,6 +30,7 @@ PACKAGE=""
 DO_START=1
 SERVICE_NAME="${SERVICE_NAME:-minigamesvr}"
 USE_SYSTEMD=0
+KEEP_ENV=0
 
 log()  { printf '[install] %s\n' "$*"; }
 err()  { printf '[install] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -38,13 +40,14 @@ usage() {
   cat <<'EOF'
 Usage: install.sh [options] [PACKAGE.tar.gz]
 
-  (default)           Install from package dir or repo (release/ + deployments/db/)
+  (default)           Full update: replace binary/cfg/db and refresh env from package
   --package FILE      Install from tar.gz package
   PACKAGE.tar.gz      Same as --package FILE (positional)
   --dir PATH          Install directory (default: /app/minigamesvr)
   --no-start          Do not start process after install
   --systemd           Install/enable systemd unit (optional)
   --no-systemd        Do not install systemd unit (default)
+  --keep-env          Keep previous release/cfg/minigamesvr.env (opt-in)
   -h, --help          Show help
 
 Layout after install:
@@ -55,6 +58,7 @@ Layout after install:
 
 Backup (when <dir> already has content):
   /app/minigamesvr_backup/minigamesvr_<timestamp>.tar.gz
+  (old env is in the backup; default install does NOT restore it)
 EOF
 }
 
@@ -65,6 +69,7 @@ while [[ $# -gt 0 ]]; do
     --no-start)   DO_START=0; shift ;;
     --systemd)    USE_SYSTEMD=1; shift ;;
     --no-systemd) USE_SYSTEMD=0; shift ;;
+    --keep-env)   KEEP_ENV=1; shift ;;
     -h|--help)    usage; exit 0 ;;
     -*)           err "unknown option: $1 (see --help)" ;;
     *.tar.gz|*.tgz)
@@ -171,9 +176,11 @@ sync_db_credentials() {
   if [[ -f "${tiktok_env}" ]]; then
     load_env_file "${tiktok_env}"
     [[ -n "${RANK_AUTH_MODE:-}" ]] && upsert_env_key "${env_dst}" "RANK_AUTH_MODE" "${RANK_AUTH_MODE}"
+    [[ -n "${RANK_AUTH_CHANNEL_MAP:-}" ]] && upsert_env_key "${env_dst}" "RANK_AUTH_CHANNEL_MAP" "${RANK_AUTH_CHANNEL_MAP}"
     [[ -n "${RANK_TT_APP_ID:-}" ]] && upsert_env_key "${env_dst}" "RANK_TT_APP_ID" "${RANK_TT_APP_ID}"
     [[ -n "${RANK_TT_CLIENT_KEY:-}" ]] && upsert_env_key "${env_dst}" "RANK_TT_CLIENT_KEY" "${RANK_TT_CLIENT_KEY}"
     [[ -n "${RANK_TT_CLIENT_SECRET:-}" ]] && upsert_env_key "${env_dst}" "RANK_TT_CLIENT_SECRET" "${RANK_TT_CLIENT_SECRET}"
+    [[ -n "${RANK_TT_CLIENT_SECRETS:-}" ]] && upsert_env_key "${env_dst}" "RANK_TT_CLIENT_SECRETS" "${RANK_TT_CLIENT_SECRETS}"
     [[ -n "${RANK_DEFAULT_APP_ID:-}" ]] && upsert_env_key "${env_dst}" "RANK_DEFAULT_APP_ID" "${RANK_DEFAULT_APP_ID}"
     log "synced TikTok creds from deployments/db/tiktok.env"
   fi
@@ -211,35 +218,45 @@ backup_if_needed() {
 
 ensure_env_file() {
   local env_dst="${INSTALL_DIR}/release/cfg/minigamesvr.env"
-  if [[ -n "${ENV_SAVE}" && -f "${ENV_SAVE}" ]]; then
-    cp -a "${ENV_SAVE}" "${env_dst}"
-    log "kept existing env: ${env_dst}"
-    return
-  fi
-  local last_bak=""
-  if [[ -f "${BACKUP_DIR}/.minigamesvr_last_backup" ]]; then
-    last_bak="$(cat "${BACKUP_DIR}/.minigamesvr_last_backup")"
-  elif [[ -f "${BACKUP_ROOT}/.minigamesvr_last_backup" ]]; then
-    last_bak="$(cat "${BACKUP_ROOT}/.minigamesvr_last_backup")"
-  fi
-  if [[ -n "${last_bak}" ]]; then
-    if [[ -f "${last_bak}" && "${last_bak}" == *.tar.gz ]]; then
-      if tar -tzf "${last_bak}" 2>/dev/null | grep -qx 'release/cfg/minigamesvr.env'; then
-        tar -xzf "${last_bak}" -O "release/cfg/minigamesvr.env" >"${env_dst}"
-        chmod 600 "${env_dst}"
-        log "restored env from backup: ${env_dst}"
-        return
-      fi
-    elif [[ -f "${last_bak}/release/cfg/minigamesvr.env" ]]; then
-      cp -a "${last_bak}/release/cfg/minigamesvr.env" "${env_dst}"
-      log "restored env from backup: ${env_dst}"
+  local env_example="${INSTALL_DIR}/release/cfg/minigamesvr.env.example"
+
+  # Opt-in: preserve previous env across full tree replace.
+  if [[ "${KEEP_ENV}" -eq 1 ]]; then
+    if [[ -n "${ENV_SAVE}" && -f "${ENV_SAVE}" ]]; then
+      cp -a "${ENV_SAVE}" "${env_dst}"
+      chmod 600 "${env_dst}"
+      log "kept existing env (--keep-env): ${env_dst}"
       return
     fi
+    local last_bak=""
+    if [[ -f "${BACKUP_DIR}/.minigamesvr_last_backup" ]]; then
+      last_bak="$(cat "${BACKUP_DIR}/.minigamesvr_last_backup")"
+    elif [[ -f "${BACKUP_ROOT}/.minigamesvr_last_backup" ]]; then
+      last_bak="$(cat "${BACKUP_ROOT}/.minigamesvr_last_backup")"
+    fi
+    if [[ -n "${last_bak}" ]]; then
+      if [[ -f "${last_bak}" && "${last_bak}" == *.tar.gz ]]; then
+        if tar -tzf "${last_bak}" 2>/dev/null | grep -qx 'release/cfg/minigamesvr.env'; then
+          tar -xzf "${last_bak}" -O "release/cfg/minigamesvr.env" >"${env_dst}"
+          chmod 600 "${env_dst}"
+          log "restored env from backup (--keep-env): ${env_dst}"
+          return
+        fi
+      elif [[ -f "${last_bak}/release/cfg/minigamesvr.env" ]]; then
+        cp -a "${last_bak}/release/cfg/minigamesvr.env" "${env_dst}"
+        chmod 600 "${env_dst}"
+        log "restored env from backup (--keep-env): ${env_dst}"
+        return
+      fi
+    fi
+    log "warn: --keep-env set but no previous env found; seeding from example"
   fi
-  if [[ ! -f "${env_dst}" && -f "${INSTALL_DIR}/release/cfg/minigamesvr.env.example" ]]; then
-    cp -a "${INSTALL_DIR}/release/cfg/minigamesvr.env.example" "${env_dst}"
-    log "created env from example: ${env_dst}"
-  fi
+
+  # Default: full update — always refresh env from package example (+ sync_db_credentials).
+  [[ -f "${env_example}" ]] || err "missing env example: ${env_example}"
+  cp -a "${env_example}" "${env_dst}"
+  chmod 600 "${env_dst}"
+  log "refreshed env from package example: ${env_dst}"
 }
 
 install_tree() {
@@ -316,7 +333,7 @@ resolve_src_dir
 [[ -d "${SRC_DIR}/deployments/db" ]] || err "missing ${SRC_DIR}/deployments/db"
 [[ -f "${SRC_DIR}/release/bin/minigamesvr" ]] || err "missing binary: ${SRC_DIR}/release/bin/minigamesvr"
 
-if [[ -f "${INSTALL_DIR}/release/cfg/minigamesvr.env" ]]; then
+if [[ "${KEEP_ENV}" -eq 1 && -f "${INSTALL_DIR}/release/cfg/minigamesvr.env" ]]; then
   ENV_SAVE="$(mktemp)"
   cp -a "${INSTALL_DIR}/release/cfg/minigamesvr.env" "${ENV_SAVE}"
 fi

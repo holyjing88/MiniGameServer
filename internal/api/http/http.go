@@ -29,6 +29,7 @@ func New(svc *service.Service) *Server {
 	reg("/v1/session", s.handleLogin) // legacy alias → login
 	reg("/v1/score", s.handleScore)
 	reg("/v1/leaderboard", s.handleLeaderboard)
+	// Douyin-compatible ImRank names (preferred). Session OR body.open_id.
 	reg("/v1/imrank/setImRankData", s.handleSetImRankData)
 	reg("/v1/imrank/getImRankList", s.handleGetImRankList)
 	reg("/v1/imrank/getImRankData", s.handleGetImRankData)
@@ -279,12 +280,13 @@ func (s *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSetImRankData(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeErr(w, http.StatusMethodNotAllowed, "METHOD", "POST required")
+	setCORS(w, r)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	claims, ok := s.requireSession(w, r)
-	if !ok {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "METHOD", "POST required")
 		return
 	}
 	var body struct {
@@ -295,31 +297,49 @@ func (s *Server) handleSetImRankData(w http.ResponseWriter, r *http.Request) {
 		Channel      string `json:"channel"`
 		ChannelID    string `json:"channel_id"`
 		ChannelId    string `json:"channelId"`
+		OpenID       string `json:"open_id"`
+		OpenId       string `json:"openId"`
+		PlayerID     string `json:"player_id"`
 		DataType     int32  `json:"dataType"`
 		Value        string `json:"value"`
 		Priority     int32  `json:"priority"`
 		Extra        string `json:"extra"`
 		RankType     string `json:"rankType"`
 		RankType2    string `json:"rank_type"`
+		PeriodType   string `json:"period_type"`
 		RelationType string `json:"relationType"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "BAD_REQUEST", "invalid json")
 		return
 	}
-	if body.AppID == "" {
-		body.AppID = claims.AppID
-	}
-	ch := domain.FirstNonEmpty(body.ChannelID, body.ChannelId, body.Channel, claims.Channel)
-	if err := s.ensureAppChannel(w, claims, body.AppID, ch); err != nil {
+	appID, ch, playerID, ok := s.resolveImRankPlayer(w, r, body.AppID, domain.FirstNonEmpty(body.ChannelID, body.ChannelId, body.Channel), domain.FirstNonEmpty(body.OpenID, body.OpenId), body.PlayerID)
+	if !ok {
 		return
+	}
+	if playerID == "" {
+		writeErr(w, http.StatusUnauthorized, "SESSION_EXPIRED", "session or open_id required")
+		return
+	}
+	if body.BoardID == "" {
+		writeErr(w, http.StatusBadRequest, "BAD_REQUEST", "board_id required")
+		return
+	}
+	value := strings.TrimSpace(body.Value)
+	if value == "" {
+		writeErr(w, http.StatusBadRequest, "BAD_REQUEST", "value required")
+		return
+	}
+	rankType := domain.FirstNonEmpty(body.RankType, body.RankType2, body.PeriodType)
+	if rankType == "" {
+		rankType = "both" // week + month (VampireDormitory default)
 	}
 	zone := domain.FirstNonEmpty(body.ZoneID, body.ZoneIDAlt)
 	out, err := s.svc.SetImRankData(r.Context(), service.SetImRankDataInput{
-		AppID: body.AppID, BoardID: body.BoardID, ZoneID: zone, Channel: ch,
-		PlayerID: claims.PlayerID, DataType: body.DataType, Value: body.Value,
+		AppID: appID, BoardID: body.BoardID, ZoneID: zone, Channel: ch,
+		PlayerID: playerID, DataType: body.DataType, Value: value,
 		Priority: body.Priority, Extra: body.Extra,
-		RankType: domain.FirstNonEmpty(body.RankType, body.RankType2),
+		RankType:     rankType,
 		RelationType: body.RelationType,
 	})
 	if err != nil {
@@ -330,18 +350,19 @@ func (s *Server) handleSetImRankData(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetImRankList(w http.ResponseWriter, r *http.Request) {
-	claims, ok := s.requireSession(w, r)
-	if !ok {
+	setCORS(w, r)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	in, err := s.parseImRankQuery(r, claims)
+	in, playerID, err := s.parseImRankQueryFlexible(r)
 	if err != nil {
 		writeImRankQueryErr(w, err)
 		return
 	}
 	out, err := s.svc.GetImRankList(r.Context(), service.GetImRankListInput{
 		AppID: in.appID, BoardID: in.boardID, ZoneID: in.zoneID, Channel: in.channel,
-		PlayerID: claims.PlayerID, RelationType: in.relationType, RankType: in.rankType,
+		PlayerID: playerID, RelationType: in.relationType, RankType: in.rankType,
 		DataType: in.dataType, Suffix: in.suffix, RankTitle: in.rankTitle, TopN: in.topN,
 	})
 	if err != nil {
@@ -352,18 +373,19 @@ func (s *Server) handleGetImRankList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetImRankData(w http.ResponseWriter, r *http.Request) {
-	claims, ok := s.requireSession(w, r)
-	if !ok {
+	setCORS(w, r)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	in, err := s.parseImRankQuery(r, claims)
+	in, playerID, err := s.parseImRankQueryFlexible(r)
 	if err != nil {
 		writeImRankQueryErr(w, err)
 		return
 	}
 	out, err := s.svc.GetImRankData(r.Context(), service.GetImRankDataInput{
 		AppID: in.appID, BoardID: in.boardID, ZoneID: in.zoneID, Channel: in.channel,
-		PlayerID: claims.PlayerID, RelationType: in.relationType, RankType: in.rankType,
+		PlayerID: playerID, RelationType: in.relationType, RankType: in.rankType,
 		DataType: in.dataType, PageNum: in.pageNum, PageSize: in.pageSize,
 	})
 	if err != nil {
@@ -382,6 +404,10 @@ func writeImRankQueryErr(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusMethodNotAllowed, "METHOD", err.Error())
 		return
 	}
+	if err == errUnauthorized {
+		writeErr(w, http.StatusUnauthorized, "SESSION_EXPIRED", err.Error())
+		return
+	}
 	writeErr(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 }
 
@@ -391,9 +417,11 @@ type imRankQuery struct {
 	dataType                        int32
 	suffix, rankTitle               string
 	topN, pageNum, pageSize         int
+	openID, playerIDHint            string
 }
 
-func (s *Server) parseImRankQuery(r *http.Request, claims *auth.Claims) (*imRankQuery, error) {
+// parseImRankQueryFlexible supports Bearer session OR body/query open_id (Douyin ImRank + Minis).
+func (s *Server) parseImRankQueryFlexible(r *http.Request) (*imRankQuery, string, error) {
 	q := &imRankQuery{}
 	if r.Method == http.MethodPost {
 		var body struct {
@@ -404,6 +432,9 @@ func (s *Server) parseImRankQuery(r *http.Request, claims *auth.Claims) (*imRank
 			Channel      string `json:"channel"`
 			ChannelID    string `json:"channel_id"`
 			ChannelId    string `json:"channelId"`
+			OpenID       string `json:"open_id"`
+			OpenId       string `json:"openId"`
+			PlayerID     string `json:"player_id"`
 			RelationType string `json:"relationType"`
 			RankType     string `json:"rankType"`
 			RankType2    string `json:"rank_type"`
@@ -416,7 +447,7 @@ func (s *Server) parseImRankQuery(r *http.Request, claims *auth.Claims) (*imRank
 			PageSize     int    `json:"pageSize"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		q.appID, q.boardID = body.AppID, body.BoardID
 		q.zoneID = domain.FirstNonEmpty(body.ZoneID, body.ZoneIDAlt)
@@ -426,6 +457,8 @@ func (s *Server) parseImRankQuery(r *http.Request, claims *auth.Claims) (*imRank
 		q.dataType = body.DataType
 		q.suffix, q.rankTitle = body.Suffix, body.RankTitle
 		q.topN, q.pageNum, q.pageSize = body.TopN, body.PageNum, body.PageSize
+		q.openID = domain.FirstNonEmpty(body.OpenID, body.OpenId)
+		q.playerIDHint = body.PlayerID
 	} else if r.Method == http.MethodGet {
 		qq := r.URL.Query()
 		q.appID = qq.Get("app_id")
@@ -443,24 +476,105 @@ func (s *Server) parseImRankQuery(r *http.Request, claims *auth.Claims) (*imRank
 		q.topN, _ = strconv.Atoi(qq.Get("top_n"))
 		q.pageNum, _ = strconv.Atoi(qq.Get("pageNum"))
 		q.pageSize, _ = strconv.Atoi(qq.Get("pageSize"))
+		q.openID = domain.FirstNonEmpty(qq.Get("open_id"), qq.Get("openId"))
+		q.playerIDHint = qq.Get("player_id")
 	} else {
-		return nil, errMethodNotAllowed
+		return nil, "", errMethodNotAllowed
 	}
-	if q.appID == "" {
-		q.appID = claims.AppID
+	if q.boardID == "" {
+		return nil, "", &apiError{msg: "board_id required"}
 	}
-	if q.channel == "" {
-		q.channel = claims.Channel
+	if q.rankType == "" {
+		q.rankType = "week"
 	}
-	if q.appID != claims.AppID || q.channel != claims.Channel {
-		return nil, errAppChannelMismatch
+	appID, ch, playerID, err := s.resolveImRankPlayerErr(r, q.appID, q.channel, q.openID, q.playerIDHint)
+	if err != nil {
+		return nil, "", err
 	}
-	return q, nil
+	q.appID, q.channel = appID, ch
+	return q, playerID, nil
+}
+
+// resolveImRankPlayer resolves identity from Bearer session or open_id (no login code exchange).
+func (s *Server) resolveImRankPlayer(w http.ResponseWriter, r *http.Request, appID, channel, openID, playerIDHint string) (string, string, string, bool) {
+	appID, ch, playerID, err := s.resolveImRankPlayerErr(r, appID, channel, openID, playerIDHint)
+	if err != nil {
+		if err == errUnauthorized {
+			writeErr(w, http.StatusUnauthorized, "SESSION_EXPIRED", err.Error())
+			return "", "", "", false
+		}
+		writeErr(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		return "", "", "", false
+	}
+	return appID, ch, playerID, true
+}
+
+func (s *Server) resolveImRankPlayerErr(r *http.Request, appID, channel, openID, playerIDHint string) (string, string, string, error) {
+	claims := s.peekSession(r)
+	if claims != nil {
+		if appID == "" {
+			appID = claims.AppID
+		}
+		if channel == "" {
+			channel = claims.Channel
+		}
+		ch, err := domain.NormalizeChannel(channel)
+		if err != nil {
+			return "", "", "", err
+		}
+		if appID != claims.AppID || ch != claims.Channel {
+			return "", "", "", errAppChannelMismatch
+		}
+		return appID, ch, claims.PlayerID, nil
+	}
+	appID = strings.TrimSpace(appID)
+	if appID == "" {
+		appID = s.svc.DefaultAppID()
+	}
+	if channel == "" {
+		channel = domain.ChannelTikTokMinis
+	}
+	ch, err := domain.NormalizeChannel(channel)
+	if err != nil {
+		return "", "", "", err
+	}
+	openID = strings.TrimSpace(openID)
+	if openID == "" && playerIDHint != "" {
+		if _, oid, ok := domain.ParseAccountID(playerIDHint); ok {
+			openID = oid
+		} else {
+			openID = strings.TrimSpace(playerIDHint)
+		}
+	}
+	if openID == "" {
+		return appID, ch, "", nil
+	}
+	return appID, ch, domain.AccountID(ch, openID), nil
+}
+
+func (s *Server) peekSession(r *http.Request) *auth.Claims {
+	h := r.Header.Get("Authorization")
+	token := ""
+	if strings.HasPrefix(strings.ToLower(h), "bearer ") {
+		token = strings.TrimSpace(h[7:])
+	}
+	if token == "" {
+		token = r.Header.Get("X-Rank-Session")
+	}
+	if token == "" {
+		return nil
+	}
+	claims, err := s.svc.ParseSession(token)
+	if err != nil {
+		return nil
+	}
+	return claims
 }
 
 var (
 	errMethodNotAllowed   = &apiError{msg: "GET or POST required"}
 	errAppChannelMismatch = &apiError{msg: "app/channel mismatch"}
+	errUnauthorized       = &apiError{msg: "session or open_id required"}
 )
 
 type apiError struct{ msg string }
@@ -559,6 +673,10 @@ func (s *Server) handleTikTokProfile(w http.ResponseWriter, r *http.Request) {
 		Code      string `json:"code"`
 		Channel   string `json:"channel"`
 		ChannelID string `json:"channel_id"`
+		ClientKey string `json:"client_key"`
+		AppID     string `json:"app_id"`     // TikTok portal app id (from client)
+		TTAppID   string `json:"tt_app_id"`  // ByteDance tt… appid (optional)
+		MiniAppID string `json:"mini_app_id"` // game business app_id
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "BAD_JSON", "invalid json body")
@@ -566,7 +684,13 @@ func (s *Server) handleTikTokProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	code := domain.FirstNonEmpty(body.AuthCode, body.TTCode, body.Code)
 	ch := domain.FirstNonEmpty(body.ChannelID, body.Channel)
-	out, err := s.svc.FetchProfileByAuthCode(r.Context(), code, ch)
+	out, err := s.svc.FetchProfileByAuthCode(r.Context(), service.FetchTTProfileInput{
+		Code:      code,
+		Channel:   ch,
+		ClientKey: body.ClientKey,
+		AppID:     domain.FirstNonEmpty(body.AppID, body.TTAppID),
+		MiniAppID: body.MiniAppID,
+	})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "TT_PROFILE_FAIL", err.Error())
 		return
@@ -580,7 +704,7 @@ func setCORS(w http.ResponseWriter, r *http.Request) {
 		origin = "*"
 	}
 	w.Header().Set("Access-Control-Allow-Origin", origin)
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 }
 

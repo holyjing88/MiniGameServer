@@ -94,6 +94,7 @@ load_mysql_env() {
   RANK_TT_APP_ID="${RANK_TT_APP_ID:-7657847833046812688}"
   RANK_TT_CLIENT_KEY="${RANK_TT_CLIENT_KEY:-mg79au52hgl5ggpi}"
   RANK_TT_CLIENT_SECRET="${RANK_TT_CLIENT_SECRET:-QZAxJCXzGhbK2RWwt3IpXBHN90yNoKto}"
+  RANK_TT_CLIENT_SECRETS="${RANK_TT_CLIENT_SECRETS:-mg79au52hgl5ggpi:QZAxJCXzGhbK2RWwt3IpXBHN90yNoKto,mgfsbs7zd5qw5o0k:YwBP4Nisjw5FMnAynylbE4OCpjbddFQJ}"
   RANK_DEFAULT_APP_ID="${RANK_DEFAULT_APP_ID:-parking_smart_brain}"
 }
 
@@ -163,6 +164,9 @@ EOF
   upsert_env_key "${dest}" "RANK_TT_APP_ID" "${RANK_TT_APP_ID}"
   upsert_env_key "${dest}" "RANK_TT_CLIENT_KEY" "${RANK_TT_CLIENT_KEY}"
   upsert_env_key "${dest}" "RANK_TT_CLIENT_SECRET" "${RANK_TT_CLIENT_SECRET}"
+  if [[ -n "${RANK_TT_CLIENT_SECRETS:-}" ]]; then
+    upsert_env_key "${dest}" "RANK_TT_CLIENT_SECRETS" "${RANK_TT_CLIENT_SECRETS}"
+  fi
   upsert_env_key "${dest}" "RANK_DEFAULT_APP_ID" "${RANK_DEFAULT_APP_ID}"
   log "synced TikTok + MySQL credentials into ${dest}"
   chmod 600 "${dest}"

@@ -18,6 +18,7 @@ SERVICE_NAME="${SERVICE_NAME:-minigamesvr}"
 PACKAGE=""
 DO_RESTART=1
 DO_SYSTEMD=1
+KEEP_ENV=0
 
 log()  { printf '[deploy-pkg] %s\n' "$*"; }
 err()  { printf '[deploy-pkg] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -32,6 +33,7 @@ Usage: deploy-package.sh --package PATH.tar.gz [options]
   --backup-root D  Backup parent dir (default: /app)
   --no-restart     Unpack only; do not systemctl restart
   --no-systemd     Skip systemd unit install/enable
+  --keep-env       Keep previous minigamesvr.env (opt-in; default is full refresh)
   -h, --help       Show help
 
 Layout after deploy:
@@ -50,6 +52,7 @@ while [[ $# -gt 0 ]]; do
     --backup-root) BACKUP_ROOT="$2"; shift 2 ;;
     --no-restart)  DO_RESTART=0; shift ;;
     --no-systemd)  DO_SYSTEMD=0; DO_RESTART=0; shift ;;
+    --keep-env)    KEEP_ENV=1; shift ;;
     -h|--help)     usage; exit 0 ;;
     *)
       if [[ -z "${PACKAGE}" && -f "$1" ]]; then
@@ -90,43 +93,44 @@ backup_if_needed() {
   log "backup done: ${bak}"
 }
 
-restore_env_from_backup() {
+ensure_env_file() {
   local env_dst="${INSTALL_DIR}/release/cfg/minigamesvr.env"
   local env_example="${INSTALL_DIR}/release/cfg/minigamesvr.env.example"
   local last_bak=""
 
-  if [[ -f "${env_dst}" ]]; then
-    log "keep existing env: ${env_dst}"
-    return
-  fi
-
-  if [[ -f "${BACKUP_ROOT}/.minigamesvr_last_backup" ]]; then
-    last_bak="$(cat "${BACKUP_ROOT}/.minigamesvr_last_backup")"
-  fi
-
-  # Prefer previous package layout, then old flat layout
-  local candidates=(
-    "${last_bak}/release/cfg/minigamesvr.env"
-    "${last_bak}/minigamesvr.env"
-  )
-  local c
-  for c in "${candidates[@]}"; do
-    if [[ -n "${c}" && -f "${c}" ]]; then
+  if [[ "${KEEP_ENV}" -eq 1 ]]; then
+    if [[ -n "${ENV_SAVE}" && -f "${ENV_SAVE}" ]]; then
       mkdir -p "$(dirname "${env_dst}")"
-      cp -a "${c}" "${env_dst}"
+      cp -a "${ENV_SAVE}" "${env_dst}"
       chmod 600 "${env_dst}"
-      log "restored env from backup: ${c}"
+      log "kept existing env (--keep-env): ${env_dst}"
       return
     fi
-  done
-
-  if [[ -f "${env_example}" ]]; then
-    cp -a "${env_example}" "${env_dst}"
-    chmod 600 "${env_dst}"
-    log "seeded env from example: ${env_dst}"
-  else
-    log "warn: no env file found; create ${env_dst} before start"
+    if [[ -f "${BACKUP_ROOT}/.minigamesvr_last_backup" ]]; then
+      last_bak="$(cat "${BACKUP_ROOT}/.minigamesvr_last_backup")"
+    fi
+    local candidates=(
+      "${last_bak}/release/cfg/minigamesvr.env"
+      "${last_bak}/minigamesvr.env"
+    )
+    local c
+    for c in "${candidates[@]}"; do
+      if [[ -n "${c}" && -f "${c}" ]]; then
+        mkdir -p "$(dirname "${env_dst}")"
+        cp -a "${c}" "${env_dst}"
+        chmod 600 "${env_dst}"
+        log "restored env from backup (--keep-env): ${c}"
+        return
+      fi
+    done
+    log "warn: --keep-env set but no previous env found; seeding from example"
   fi
+
+  [[ -f "${env_example}" ]] || err "missing env example: ${env_example}"
+  mkdir -p "$(dirname "${env_dst}")"
+  cp -a "${env_example}" "${env_dst}"
+  chmod 600 "${env_dst}"
+  log "refreshed env from package example: ${env_dst}"
 }
 
 extract_package() {
@@ -203,9 +207,20 @@ print_summary() {
 EOF
 }
 
+ENV_SAVE=""
+cleanup() {
+  [[ -n "${ENV_SAVE}" && -f "${ENV_SAVE}" ]] && rm -f "${ENV_SAVE}"
+}
+trap cleanup EXIT
+
+if [[ "${KEEP_ENV}" -eq 1 && -f "${INSTALL_DIR}/release/cfg/minigamesvr.env" ]]; then
+  ENV_SAVE="$(mktemp)"
+  cp -a "${INSTALL_DIR}/release/cfg/minigamesvr.env" "${ENV_SAVE}"
+fi
+
 backup_if_needed
 extract_package
-restore_env_from_backup
+ensure_env_file
 
 if [[ "${DO_SYSTEMD}" -eq 1 ]]; then
   install_systemd
