@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # MiniGameServer MySQL initialization (standalone).
 #
-# Creates database and applies deployments/db/schema.sql.
+# Creates database and applies deployments/schema.sql.
 # Uses a single MySQL account: root (no separate app user).
 #
 # Usage:
@@ -49,7 +49,8 @@ Options:
 
 Account: root only. Config: CLI > env vars > mysql.env / db.env > defaults
 
-Schema: deployments/db/schema.sql only (no ALTER / dual path).
+Schema search order:
+  $SCHEMA_SQL, deployments/schema.sql, db/schema.sql
 
 Stop the app before --reinit.
 EOF
@@ -127,13 +128,20 @@ while [[ $# -gt 0 ]]; do
 done
 
 resolve_schema_sql() {
-  local c="${SCRIPT_DIR}/schema.sql"
-  [[ -f "${c}" ]] || return 1
-  SCHEMA_SQL="${c}"
-  return 0
+  local c
+  for c in \
+    "${SCHEMA_SQL:-}" \
+    "${DEPLOYMENTS_DIR}/schema.sql" \
+    "${SCRIPT_DIR}/schema.sql"
+  do
+    [[ -n "${c}" && -f "${c}" ]] || continue
+    SCHEMA_SQL="${c}"
+    return 0
+  done
+  return 1
 }
 
-resolve_schema_sql || err "schema not found: deployments/db/schema.sql"
+resolve_schema_sql || err "schema not found (tried deployments/schema.sql and db/schema.sql)"
 log "schema: ${SCHEMA_SQL}"
 
 sql_ident() {
